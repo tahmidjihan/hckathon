@@ -1,0 +1,70 @@
+"""
+MODIS-VIIRS 2-Phase Harmonization Engine
+========================================
+Scientific cross-sensor active fire harmonization engine matching MODIS active fire
+detections against unified VIIRS event records with dual-phase segregation,
+three distinct dataset partitions per phase, and complete provenance tracking.
+
+Architecture & Scientific Workflow:
+  Phase 1: Terra <--> Unified VIIRS (Diagnostic Pass)
+    - Max time window: 240.0 minutes (4.0 hours diagnostic persistence pass)
+    - Spatial radius: 1.5 km
+    - Excluded from confidence calibration; retained strictly as a diagnostic signal.
+    - Produces 3 datasets:
+        1. Dataset 1 (Only MODIS): Terra detections with no temporal/spatial VIIRS match
+        2. Dataset 2 (Only VIIRS): VIIRS detections with no MODIS Terra match
+        3. Dataset 3 (Matched Pairs): Coincident dual-sensor observations with preserved radiometry
+
+  Phase 2: Aqua <--> Unified VIIRS (Primary Validation & Harmonized Product)
+    - Max time window: 60.0 minutes (near-coincident primary pass)
+    - Spatial radius: 1.5 km
+    - Anchor: MODIS is the search anchor (canonical coordinates & timestamps).
+    - Single candidate selection: Nearest candidate within spatio-temporal radius with deterministic
+      source-ID tie-breaking. Radiometry takes max(MODIS, VIIRS), without synthetic summation.
+    - Frozen Global Calibration:
+        Two-stage workflow:
+        1. Fit & persist calibration from complete declared population (L/N/H means and sample sizes).
+        2. Apply frozen calibration in product runs (scope-validated).
+    - Three-Population Low-Confidence Filtering:
+        1. Matched pairs: strictly below L-threshold -> filtered; >= L-threshold -> retained.
+        2. Unmatched MODIS: strictly below L-threshold -> filtered; >= L-threshold -> retained.
+        3. Unmatched VIIRS: 'L' -> filtered; 'N' and 'H' -> retained; missing/unknown -> filtered.
+    - Output:
+        Year-wise Parquet files (harmonized_{year}.parquet) as the authoritative primary product,
+        with population CSVs and filtered-out audit CSVs for diagnostics and compatibility.
+"""
+
+"""
+MODIS–VIIRS Harmonization Engine (Updated Orbital-Drift Milestone Architecture)
+==============================================================================
+Scientific cross-sensor active fire harmonization engine matching MODIS active fire
+detections against unified VIIRS event records with dual-phase segregation,
+orbital-drift milestone cutoffs, adaptive time windows, and complete provenance tracking.
+
+New Orbital-Drift Milestone Cutoffs & Time-Window Policy:
+  A. Historical Milestones:
+     - Oct 2022 (Terra Cutoff):
+         Terra exits the matching workflow after this milestone.
+         * Pre-cutoff (< 2022-10-01): 4-hour Terra pass kept for diagnostic persistence.
+         * Post-cutoff (>= 2022-10-01): Terra–VIIRS matching is disabled in this harmonization stage.
+     - Feb 2023 (Aqua Cutoff):
+         Aqua adopts the new matching window after this milestone.
+         * Pre-cutoff (< 2023-02-01): 60-minute matching window.
+         * Post-cutoff (>= 2023-02-01): 2-hour-15-minute (135.0 minutes) window.
+         (Note: The 2h 15m Aqua window is an implementation rule, not yet an empirically validated
+          guarantee that every matched pair represents an unchanged fire).
+
+  B. Spatial & Radiometric Invariants:
+     - The fixed 1.5 km MODIS-centered search radius remains unchanged.
+     - Actual acquisition timestamps are preserved and compared using proper datetime arithmetic.
+     - Anchor coordinates, deterministic candidate selection, and max-radiometry merging remain in place.
+
+  C. Updated Workflow Revisions:
+     - Phase 4 Low-Confidence Filtering is REMOVED from the core workflow:
+         All three populations (matched pairs, unmatched MODIS, unmatched VIIRS) are retained
+         in the final harmonized product (year-wise Parquet and consolidated datasets) without
+         dropping low-confidence records.
+     - Missing VIIRS L-Confidence Data:
+         If VIIRS does not have any 'L'-confidence data, the calibration engine does not throw
+         an error; it accepts it cleanly and continues with available classes (N, H).
+"""

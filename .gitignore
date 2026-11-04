@@ -1,0 +1,76 @@
+# ============================================================================
+# Satellite dataset — the bulk of this workspace (~37 GB)
+# ----------------------------------------------------------------------------
+# Ignore all data files, but keep the small cleaning scripts (*.py) that live
+# beside the outputs. The actual CSV granules must never enter git history.
+# ============================================================================
+data/**
+!data/**/
+!data/**/*.py
+!data/**/*.md
+
+# ============================================================================
+# Generated pipeline outputs
+# ============================================================================
+Data/
+Processed/
+**/Harmonized/
+**/Yearly/
+*.parquet
+unification-*.csv
+harmonized_*.csv
+modis-viirs-*.csv
+*_matched_pairs.csv
+*_only_modis.csv
+*_only_viirs.csv
+run_manifest.json
+calibration*.json
+
+# ============================================================================
+# Python
+# ============================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+ENV/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+*.prof
+
+# ============================================================================
+# Editors / IDEs / OS
+# ============================================================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ============================================================================
+# Logs / temporary files
+# ============================================================================
+*.log
+*.tmp
+*.temp
+*.bak
+*.orig
+*.rej

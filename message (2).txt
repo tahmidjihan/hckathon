@@ -1,0 +1,699 @@
+"""
+VIIRS Satellite Data Unification Pipeline (Pair-Driven Engine - CSV Only)
+========================================================================
+Unifies duplicate active fire detections across supported VIIRS satellites:
+  - Suomi-NPP (VNP14IMG)
+  - NOAA-20 / JPSS-1 (VJ114IMG)
+  - NOAA-21 / JPSS-2 (VJ214IMG)
+
+Core Architecture:
+  1. CSV Discovery & Validation:
+     Scans CSV detection files, validates records, drops exact duplicates, and tracks skipped rows.
+  2. Two-Pass Anchor-Based Matching:
+     - Pass 1: NOAA-20 anchor, 750 m, 65 min, collects Suomi-NPP and NOAA-21.
+     - Pass 2: Leftovers only, NOAA-21 anchor, 750 m, 30 min, collects Suomi-NPP.
+     - Nearest-anchor assignment with deterministic tie-breaking.
+     - Unmatched leftovers pass through unchanged.
+  3. Shared Event Construction:
+     build_event() constructs unified event records.
+  4. Detection Conservation Check:
+     Asserts that the sum of event_pixel_count equals the raw count.
+"""
+
+import os
+import sys
+import csv
+import math
+import json
+import argparse
+from datetime import datetime, timedelta
+from typing import Dict, List, Tuple, Any, Optional, Set
+
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
+
+EARTH_RADIUS_METERS = 6371000.0
+
+SATELLITE_MAP = {
+    "SUOMI-NPP": ("Suomi-NPP", "NPP_OPS"),
+    "SNPP": ("Suomi-NPP", "NPP_OPS"),
+    "NPP": ("Suomi-NPP", "NPP_OPS"),
+    "N": ("Suomi-NPP", "NPP_OPS"),
+    "SUOMI_NPP": ("Suomi-NPP", "NPP_OPS"),
+    "NOAA-20": ("NOAA-20", "JP1VIIRS"),
+    "NOAA20": ("NOAA-20", "JP1VIIRS"),
+    "N20": ("NOAA-20", "JP1VIIRS"),
+    "JPSS-1": ("NOAA-20", "JP1VIIRS"),
+    "JPSS1": ("NOAA-20", "JP1VIIRS"),
+    "NOAA-21": ("NOAA-21", "JP2VIIRS"),
+    "NOAA21": ("NOAA-21", "JP2VIIRS"),
+    "N21": ("NOAA-21", "JP2VIIRS"),
+    "JPSS-2": ("NOAA-21", "JP2VIIRS"),
+    "JPSS2": ("NOAA-21", "JP2VIIRS"),
+}
+
+VIIRS_LAUNCH_DATES = {
+    "Suomi-NPP": "2011-10-28",
+    "NOAA-20": "2017-11-18",
+    "NOAA-21": "2022-11-10",
+}
+
+
+# -------------------------------------------------------------------------
+# Spatial Utilities & Haversine Distance
+# -------------------------------------------------------------------------
+def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Computes great-circle distance between two points in meters."""
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+    
+    a = math.sin(dphi / 2.0) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2.0) ** 2
+    c = 2.0 * math.atan2(math.sqrt(a), math.sqrt(max(0.0, 1.0 - a)))
+    return EARTH_RADIUS_METERS * c
+
+
+class SpatialGridIndex:
+    """2D spatial grid index for bounding-box and radius queries."""
+    def __init__(self, cell_size_deg: float = 0.015):
+        self.cell_size = cell_size_deg
+        self.grid: Dict[Tuple[int, int], List[int]] = {}
+
+    def insert(self, detection_id: int, lat: float, lon: float):
+        cell_lat = int(math.floor(lat / self.cell_size))
+        cell_lon = int(math.floor(lon / self.cell_size))
+        cell = (cell_lat, cell_lon)
+        if cell not in self.grid:
+            self.grid[cell] = []
+        self.grid[cell].append(detection_id)
+
+    def query_radius(
+        self,
+        lat: float,
+        lon: float,
+        radius_m: float,
+        detections: List[Dict[str, Any]],
+        filter_fn=None,
+    ) -> List[Tuple[int, float]]:
+        lat_rad = math.radians(abs(lat))
+        cos_lat = max(0.05, math.cos(lat_rad))
+        
+        dlat_deg = radius_m / 111320.0
+        dlon_deg = radius_m / (111320.0 * cos_lat)
+        
+        step_lat = max(1, int(math.ceil(dlat_deg / self.cell_size)))
+        step_lon = max(1, int(math.ceil(dlon_deg / self.cell_size)))
+        
+        c_lat = int(math.floor(lat / self.cell_size))
+        c_lon = int(math.floor(lon / self.cell_size))
+        
+        results = []
+        for dlat in range(-step_lat, step_lat + 1):
+            for dlon in range(-step_lon, step_lon + 1):
+                cell = (c_lat + dlat, c_lon + dlon)
+                cand_ids = self.grid.get(cell)
+                if not cand_ids:
+                    continue
+                for cand_id in cand_ids:
+                    cand = detections[cand_id]
+                    if filter_fn and not filter_fn(cand):
+                        continue
+                    dist = haversine_distance(lat, lon, cand["latitude"], cand["longitude"])
+                    if dist <= radius_m:
+                        results.append((cand_id, dist))
+        return results
+
+
+# -------------------------------------------------------------------------
+# CSV Detection File Parser (CSV Only)
+# -------------------------------------------------------------------------
+def parse_viirs_csv(file_path: str, start_id: int = 0) -> Tuple[List[Dict[str, Any]], int]:
+    """
+    Parses a VIIRS CSV detection file into normalized detection records.
+    Requires explicit fields, tracks skipped rows, and drops exact duplicates.
+    Raises ValueError on unrecognized satellite labels or unparseable dates/times.
+    """
+    detections: List[Dict[str, Any]] = []
+    skipped_rows = 0
+    seen_rows = set()
+
+    try:
+        with open(file_path, mode="r", encoding="utf-8-sig") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                clean = {k.strip().lower().lstrip("\ufeff"): v for k, v in row.items() if k}
+                lat_str = clean.get("latitude", clean.get("lat"))
+                lon_str = clean.get("longitude", clean.get("lon"))
+                raw_d = clean.get("acq_date", clean.get("date"))
+                raw_t = clean.get("acq_time", clean.get("time"))
+                raw_bt4 = clean.get("bright_ti4", clean.get("brightness"))
+                raw_bt5 = clean.get("bright_ti5", clean.get("bright_t31"))
+                raw_frp = clean.get("frp", clean.get("power"))
+                raw_conf = clean.get("confidence")
+                raw_sat = clean.get("satellite", clean.get("platform"))
+
+                if not lat_str or not lon_str:
+                    skipped_rows += 1
+                    continue
+
+                if not raw_d or str(raw_d).strip() == "":
+                    raise ValueError(f"Missing required field 'acq_date' in CSV {file_path}")
+                if not raw_t or str(raw_t).strip() == "":
+                    raise ValueError(f"Missing required field 'acq_time' in CSV {file_path}")
+                if raw_bt4 is None or str(raw_bt4).strip() == "":
+                    raise ValueError(f"Missing required field 'bright_ti4' in CSV {file_path}")
+                if raw_frp is None or str(raw_frp).strip() == "":
+                    raise ValueError(f"Missing required field 'frp' in CSV {file_path}")
+                if raw_conf is None or str(raw_conf).strip() == "":
+                    raise ValueError(f"Missing required field 'confidence' in CSV {file_path}")
+                if not raw_sat or str(raw_sat).strip() == "":
+                    raise ValueError(f"Missing required field 'satellite' in CSV {file_path}")
+
+                try:
+                    lat = float(lat_str)
+                    lon = float(lon_str)
+                    if math.isnan(lat) or math.isnan(lon) or abs(lat) > 90.0 or abs(lon) > 180.0:
+                        skipped_rows += 1
+                        continue
+                except (ValueError, TypeError):
+                    skipped_rows += 1
+                    continue
+
+                acq_d = str(raw_d).strip()[:10]
+                acq_t = str(raw_t).strip().replace(":", "").zfill(4)[:4]
+
+                try:
+                    dt = datetime.strptime(f"{acq_d} {acq_t}", "%Y-%m-%d %H%M")
+                except Exception as e:
+                    raise ValueError(f"Unparseable date/time from acq_date='{acq_d}' and acq_time='{acq_t}' in CSV {file_path}") from e
+
+                try:
+                    bright_ti4 = float(raw_bt4)
+                except (ValueError, TypeError):
+                    raise ValueError(f"Invalid bright_ti4 value '{raw_bt4}' in CSV {file_path}")
+
+                try:
+                    bright_ti5 = float(raw_bt5) if raw_bt5 is not None and str(raw_bt5).strip() != "" else bright_ti4 - 15.0
+                except (ValueError, TypeError):
+                    raise ValueError(f"Invalid bright_ti5 value '{raw_bt5}' in CSV {file_path}")
+
+                try:
+                    frp = float(raw_frp)
+                except (ValueError, TypeError):
+                    raise ValueError(f"Invalid frp value '{raw_frp}' in CSV {file_path}")
+
+                sat_key = str(raw_sat).strip().upper()
+                if sat_key not in SATELLITE_MAP:
+                    raise ValueError(f"Unrecognized satellite label: '{raw_sat}' in CSV {file_path}")
+                sat, inst = SATELLITE_MAP[sat_key]
+
+                conf_str = str(raw_conf).strip().lower()
+                if conf_str in ("h", "high"):
+                    conf_code = 9
+                    conf_norm = "high"
+                    conf_label = "H"
+                elif conf_str in ("l", "low"):
+                    conf_code = 7
+                    conf_norm = "low"
+                    conf_label = "L"
+                elif conf_str in ("n", "nominal"):
+                    conf_code = 8
+                    conf_norm = "nominal"
+                    conf_label = "N"
+                else:
+                    raise ValueError(f"Unrecognized confidence value: '{raw_conf}' in CSV {file_path}")
+
+                daynight = str(clean.get("daynight", "D")).strip().upper()
+                if daynight not in ("D", "N"):
+                    daynight = "D"
+
+                try:
+                    fire_type = int(clean.get("type", 0))
+                except (ValueError, TypeError):
+                    fire_type = 0
+
+                # Drop exact duplicate rows (same satellite, lat, lon, date, time)
+                dup_key = (sat, lat, lon, acq_d, acq_t)
+                if dup_key in seen_rows:
+                    skipped_rows += 1
+                    continue
+                seen_rows.add(dup_key)
+
+                detections.append({
+                    "id": start_id + len(detections),
+                    "satellite": sat,
+                    "instrument": inst,
+                    "dt": dt,
+                    "acq_date": acq_d,
+                    "acq_time": acq_t,
+                    "latitude": lat,
+                    "longitude": lon,
+                    "frp": frp,
+                    "bright_ti4": bright_ti4,
+                    "bright_ti5": bright_ti5,
+                    "confidence_code": conf_code,
+                    "confidence": conf_norm,
+                    "confidence_short": conf_label.lower(),
+                    "daynight": daynight,
+                    "type": fire_type,
+                    "granule_file": os.path.basename(file_path),
+                })
+    except ValueError:
+        raise
+    except Exception as e:
+        print(f"[WARN] Failed to read CSV {file_path}: {e}")
+        return [], 0
+
+    return detections, skipped_rows
+
+
+def discover_input_files(data_path: str) -> List[str]:
+    """Discovers CSV input files from a directory or single file path."""
+    if not os.path.exists(data_path):
+        return []
+
+    if os.path.isfile(data_path):
+        if data_path.lower().endswith((".csv", ".txt")):
+            return [data_path]
+        return []
+
+    csv_files = []
+    for root, _, files in os.walk(data_path):
+        for f in files:
+            if f.lower().endswith((".csv", ".txt")):
+                csv_files.append(os.path.join(root, f))
+
+    return sorted(csv_files)
+
+
+def _conf_score(r: Dict[str, Any]) -> int:
+    code = r.get("confidence_code")
+    if code is not None:
+        try:
+            return int(code)
+        except (ValueError, TypeError):
+            pass
+    raw = str(r.get("confidence", "")).strip().lower()
+    if raw in ("h", "high"):
+        return 9
+    if raw in ("l", "low"):
+        return 7
+    return 8
+
+
+# -------------------------------------------------------------------------
+# Event Construction Helper
+# -------------------------------------------------------------------------
+def build_event(group_records: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Constructs a unified event dictionary from one or more grouped detection records."""
+    canonical = max(
+        group_records,
+        key=lambda r: (_conf_score(r), float(r.get("frp", 0.0) or 0.0))
+    )
+
+    earliest = min(group_records, key=lambda r: r["dt"])
+
+    sats = sorted(list(set(r["satellite"] for r in group_records)))
+    insts = sorted(list(set(r["instrument"] for r in group_records)))
+
+    conf_priority = {"high": 3, "nominal": 2, "low": 1}
+
+    sat_conf_map: Dict[str, str] = {}
+    for r in group_records:
+        sat = r["satellite"]
+        c = str(r.get("confidence", "nominal"))
+        if sat not in sat_conf_map or conf_priority.get(c, 0) > conf_priority.get(sat_conf_map[sat], 0):
+            sat_conf_map[sat] = c
+
+    sat_conf_pairs = [[r["satellite"], str(r.get("confidence", "nominal"))] for r in group_records]
+
+    num_satellites = len(sats)
+    is_multi = (num_satellites > 1)
+
+    return {
+        "latitude": round(canonical["latitude"], 5),
+        "longitude": round(canonical["longitude"], 5),
+        "acq_date": canonical["acq_date"],
+        "acq_time": canonical["acq_time"],
+        "first_acq_date": earliest["acq_date"],
+        "first_acq_time": earliest["acq_time"],
+        "frp": round(float(canonical["frp"]), 2),
+        "bright_ti4": round(float(canonical["bright_ti4"]), 2),
+        "bright_ti5": round(float(canonical["bright_ti5"]), 2),
+        "satellite": json.dumps(sats),
+        "instrument": json.dumps(insts),
+        "confidence": json.dumps(sat_conf_pairs),
+        "satellite_confidences": json.dumps(sat_conf_map),
+        "num_satellites": num_satellites,
+        "multi_satellite": is_multi,
+        "canonical_satellite": canonical["satellite"],
+        "canonical_instrument": canonical["instrument"],
+        "canonical_confidence": canonical["confidence"],
+        "canonical_confidence_label": canonical.get("confidence_short", "n").upper(),
+        "canonical_daynight": canonical.get("daynight", "D"),
+        "event_detection_count": len(group_records),
+        "type": canonical.get("type", 0),
+    }
+
+
+# -------------------------------------------------------------------------
+# Two-Pass Unification Engine
+# -------------------------------------------------------------------------
+def run_unification(
+    detections: List[Dict[str, Any]],
+    radius_m: float = 750.0,
+    pass1_window_min: float = 65.0,
+    pass2_window_min: float = 30.0,
+) -> List[Dict[str, Any]]:
+    """
+    Pass 1: NOAA-20 anchor, 750 m, 65 min, collects Suomi-NPP and NOAA-21.
+    Pass 2: Leftovers only, NOAA-21 anchor, 750 m, 30 min, collects Suomi-NPP.
+    Nearest-anchor assignment with deterministic tie-breaking.
+    Asserts detection conservation.
+    """
+    total_detections = len(detections)
+    if total_detections == 0:
+        return []
+
+    for idx, d in enumerate(detections):
+        d["index"] = idx
+
+    n20_indices = [i for i, d in enumerate(detections) if d["satellite"] == "NOAA-20"]
+    n21_indices = [i for i, d in enumerate(detections) if d["satellite"] == "NOAA-21"]
+    snpp_indices = [i for i, d in enumerate(detections) if d["satellite"] == "Suomi-NPP"]
+
+    merged_indices: Set[int] = set()
+    event_groups: List[List[Dict[str, Any]]] = []
+
+    p1_window = timedelta(minutes=pass1_window_min)
+    p2_window = timedelta(minutes=pass2_window_min)
+
+    # Pass 1: NOAA-20 anchor
+    if n20_indices:
+        grid_n20 = SpatialGridIndex(cell_size_deg=0.015)
+        for idx in n20_indices:
+            grid_n20.insert(idx, detections[idx]["latitude"], detections[idx]["longitude"])
+
+        pass1_candidates = snpp_indices + n21_indices
+        n20_assigned: Dict[int, List[int]] = {idx: [] for idx in n20_indices}
+
+        for c_idx in pass1_candidates:
+            cand = detections[c_idx]
+            cand_dt = cand["dt"]
+
+            matches = grid_n20.query_radius(
+                cand["latitude"],
+                cand["longitude"],
+                radius_m,
+                detections,
+                filter_fn=lambda a: abs(a["dt"] - cand_dt) <= p1_window,
+            )
+
+            if matches:
+                best_anchor_idx, _ = min(matches, key=lambda x: (x[1], x[0]))
+                n20_assigned[best_anchor_idx].append(c_idx)
+                merged_indices.add(c_idx)
+
+        for a_idx in n20_indices:
+            group = [detections[a_idx]] + [detections[c_idx] for c_idx in n20_assigned[a_idx]]
+            event_groups.append(group)
+            merged_indices.add(a_idx)
+
+    # Pass 2: NOAA-21 anchor, leftovers only
+    n21_leftovers = [i for i in n21_indices if i not in merged_indices]
+    snpp_leftovers = [i for i in snpp_indices if i not in merged_indices]
+
+    if n21_leftovers:
+        grid_n21 = SpatialGridIndex(cell_size_deg=0.015)
+        for idx in n21_leftovers:
+            grid_n21.insert(idx, detections[idx]["latitude"], detections[idx]["longitude"])
+
+        n21_assigned: Dict[int, List[int]] = {idx: [] for idx in n21_leftovers}
+
+        for s_idx in snpp_leftovers:
+            s_cand = detections[s_idx]
+            s_dt = s_cand["dt"]
+
+            matches = grid_n21.query_radius(
+                s_cand["latitude"],
+                s_cand["longitude"],
+                radius_m,
+                detections,
+                filter_fn=lambda a: abs(a["dt"] - s_dt) <= p2_window,
+            )
+
+            if matches:
+                best_anchor_idx, _ = min(matches, key=lambda x: (x[1], x[0]))
+                n21_assigned[best_anchor_idx].append(s_idx)
+                merged_indices.add(s_idx)
+
+        for a_idx in n21_leftovers:
+            group = [detections[a_idx]] + [detections[s_idx] for s_idx in n21_assigned[a_idx]]
+            event_groups.append(group)
+            merged_indices.add(a_idx)
+
+    # Leftovers pass through unchanged
+    for idx, d in enumerate(detections):
+        if idx not in merged_indices:
+            event_groups.append([d])
+            merged_indices.add(idx)
+
+    unified_events = [build_event(grp) for grp in event_groups]
+    unified_events.sort(key=lambda e: (e["acq_date"], e["acq_time"], e["latitude"], e["longitude"]))
+
+    total_event_detections = sum(e["event_detection_count"] for e in unified_events)
+    if total_event_detections != total_detections:
+        raise RuntimeError(f"Detection conservation failed: sum of event_detection_count ({total_event_detections}) != raw count ({total_detections})")
+
+    return unified_events
+
+
+def validate_date_string(d_str: str, param_name: str) -> datetime:
+    """Validates YYYY-MM-DD date string format."""
+    try:
+        return datetime.strptime(d_str, "%Y-%m-%d")
+    except Exception as e:
+        raise ValueError(f"Invalid {param_name} '{d_str}': must be valid date in YYYY-MM-DD format") from e
+
+
+def resolve_and_validate_date_args(
+    date: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    detected_dates: Optional[List[str]] = None,
+) -> str:
+    """
+    Validates date CLI parameters and resolves the canonical date/date-range string.
+    Rejects invalid formats, contradictory combinations, or incomplete ranges.
+    """
+    has_date = bool(date and str(date).strip())
+    has_start = bool(start_date and str(start_date).strip())
+    has_end = bool(end_date and str(end_date).strip())
+
+    if has_date and (has_start or has_end):
+        raise ValueError(
+            "Contradictory date arguments: cannot specify both --date and --start-date/--end-date"
+        )
+
+    if has_start != has_end:
+        raise ValueError(
+            "Incomplete date range: both --start-date and --end-date must be provided together"
+        )
+
+    if has_date:
+        validate_date_string(date.strip(), "--date")
+        return date.strip()
+
+    if has_start and has_end:
+        s_dt = validate_date_string(start_date.strip(), "--start-date")
+        e_dt = validate_date_string(end_date.strip(), "--end-date")
+        if s_dt > e_dt:
+            raise ValueError(
+                f"Contradictory date range: --start-date ({start_date}) cannot be after --end-date ({end_date})"
+            )
+        if start_date.strip() == end_date.strip():
+            return start_date.strip()
+        return f"{start_date.strip()}_to_{end_date.strip()}"
+
+    # Manifest-free fallback to discovered dates in dataset
+    if detected_dates:
+        valid_dates = sorted(list(set(d for d in detected_dates if d)))
+        if len(valid_dates) > 1:
+            return f"{valid_dates[0]}_to_{valid_dates[-1]}"
+        elif len(valid_dates) == 1:
+            return valid_dates[0]
+
+    return "unknown-date"
+
+
+# -------------------------------------------------------------------------
+# CLI & Execution Handler
+# -------------------------------------------------------------------------
+def main():
+    parser = argparse.ArgumentParser(
+        description="VIIRS Satellite Data Unification Pipeline (CSV Only, Two-Pass Anchor Engine)"
+    )
+    parser.add_argument(
+        "--data-dir", "--input-dir", "-d", "-i",
+        type=str,
+        required=True,
+        help="Directory containing VIIRS CSV detection files",
+    )
+    parser.add_argument(
+        "--region",
+        type=str,
+        required=True,
+        help="Region label (required)",
+    )
+    parser.add_argument(
+        "--date",
+        type=str,
+        default=None,
+        help="Date label YYYY-MM-DD",
+    )
+    parser.add_argument(
+        "--start-date",
+        type=str,
+        default=None,
+        help="Start date YYYY-MM-DD for date range",
+    )
+    parser.add_argument(
+        "--end-date",
+        type=str,
+        default=None,
+        help="End date YYYY-MM-DD for date range",
+    )
+    parser.add_argument(
+        "--output", "-o",
+        type=str,
+        default=None,
+        help="Output path for unified events CSV",
+    )
+    parser.add_argument(
+        "--radius", "-r",
+        type=float,
+        default=750.0,
+        help="Matching radius in meters (default: 750.0 m)",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=False,
+        help="Dry run: inspect files and counts without writing CSV",
+    )
+
+    args = parser.parse_args()
+
+    input_files = discover_input_files(args.data_dir)
+    if not input_files:
+        print(f"[ERROR] No valid CSV files found in {args.data_dir}")
+        sys.exit(1)
+
+    print("=" * 70)
+    print(" VIIRS SATELLITE DATA UNIFICATION PIPELINE (CSV 2-PASS ANCHOR)")
+    print("=" * 70)
+    print(f" Data Input  : {args.data_dir}")
+    print(f" Region      : {args.region}")
+    print(f" Radius      : {args.radius} m")
+    print(f" Pass 1 Win  : 65.0 min (NOAA-20 anchor -> Suomi-NPP & NOAA-21)")
+    print(f" Pass 2 Win  : 30.0 min (NOAA-21 anchor leftovers -> Suomi-NPP)")
+    print("=" * 70)
+
+    all_detections: List[Dict[str, Any]] = []
+    unique_dates = set()
+    total_skipped = 0
+
+    for fpath in input_files:
+        dets, skipped = parse_viirs_csv(fpath, start_id=len(all_detections))
+        total_skipped += skipped
+        all_detections.extend(dets)
+        for d in dets:
+            unique_dates.add(d["acq_date"])
+
+    print(f"\n[INFO] CSV Ingestion Summary:")
+    print(f"       Total CSV files found : {len(input_files)}")
+    print(f"       Total raw detections  : {len(all_detections):,}")
+    print(f"       Total skipped rows    : {total_skipped:,}")
+
+    if not all_detections:
+        print("[WARN] No active fire detections found. Exiting.")
+        sys.exit(0)
+
+    sat_counts = {}
+    for d in all_detections:
+        sat_counts[d["satellite"]] = sat_counts.get(d["satellite"], 0) + 1
+
+    sorted_dates = sorted(list(unique_dates))
+    try:
+        resolved_date = resolve_and_validate_date_args(
+            date=args.date,
+            start_date=args.start_date,
+            end_date=args.end_date,
+            detected_dates=sorted_dates,
+        )
+    except ValueError as e:
+        print(f"[ERROR] {e}")
+        parser.error(str(e))
+
+    print(f"\n[INFO] Detection Counts by Satellite:")
+    for sat, count in sorted(sat_counts.items()):
+        print(f"       - {sat:14}: {count:,} pixels")
+
+    for vsat, launch_d in VIIRS_LAUNCH_DATES.items():
+        if vsat not in sat_counts:
+            target_d = resolved_date.split("_to_")[0]
+            if target_d < launch_d:
+                print(f"       - {vsat:14}: 0 pixels [NOT LAUNCHED YET on {resolved_date} (Launch Date: {launch_d})]")
+            else:
+                print(f"       - {vsat:14}: 0 pixels [Operational - 0 detections in input files]")
+
+    if args.output:
+        out_path = args.output
+    else:
+        out_path = f"Data/Processed/{args.region}/{resolved_date}/VIIRS/unification-{args.region}-{resolved_date}.csv"
+
+    if args.dry_run:
+        print(f"\n[DRY RUN] Target output CSV: {out_path}")
+        print(f"[DRY RUN] Completed successfully. Exiting without writing CSV.")
+        sys.exit(0)
+
+    print(f"\n[INFO] Executing 2-Pass Anchor Unification Engine...")
+    unified_events = run_unification(
+        all_detections,
+        radius_m=args.radius,
+    )
+
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    if unified_events:
+        with open(out_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=list(unified_events[0].keys()))
+            writer.writeheader()
+            writer.writerows(unified_events)
+    else:
+        with open(out_path, "w", newline="", encoding="utf-8") as f:
+            f.write("")
+
+    print(f"\n[INFO] Successfully written {len(unified_events):,} unified events to: {out_path}")
+
+    total_events = len(unified_events)
+    multi_events = sum(1 for e in unified_events if e["multi_satellite"])
+    single_events = total_events - multi_events
+    pct_multi = (multi_events / total_events * 100.0) if total_events > 0 else 0.0
+
+    print(f"\n==================================================================")
+    print(f" UNIFICATION RESULTS SUMMARY")
+    print(f"==================================================================")
+    print(f" Raw Fire Betections Ingested:          {len(all_detections):,}")
+    print(f" Unified Physical Fire Events:       {total_events:,}")
+    print(f" Reduction (raw detections → events):    {((len(all_detections) - total_events) / len(all_detections) * 100.0):.1f}%")
+    print(f" Multi-Satellite Confirmed Events:   {multi_events:,} ({pct_multi:.1f}%)")
+    print(f" Single-Satellite Events:            {single_events:,} ({100.0 - pct_multi:.1f}%)")
+    print("==================================================================\n")
+
+
+if __name__ == "__main__":
+    main()
+
+    

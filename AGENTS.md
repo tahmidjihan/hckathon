@@ -18,29 +18,86 @@ There are two distinct matching problems:
 2. **MODIS ↔ unified-VIIRS harmonization** (`modis_viirs_harmonization.py`): match MODIS
    detections against unified VIIRS events and emit matched pairs / sensor-only populations.
 
-The project is a research/data-engineering artifact, not a web app. There is no `git` repo,
-no `requirements.txt`, and no test suite in the current workspace.
+The project is a research/data-engineering artifact, not a web app. There is no
+`requirements.txt` and no automated test suite in the workspace. A Git repository
+may be present; data outputs are ignored.
 
 ## 2. File map
 
 | Path | Role |
 | --- | --- |
-| `modis_viirs_harmonization.py` | **Main pipeline** (1,426 lines). Loads MODIS + unified VIIRS, runs Terra/Aqua matching, optional calibration, writes CSVs + year-wise Parquet + `run_manifest.json`. |
+| `build_unified_wildfires.py` | **Current main entry point.** Builds the single de-duplicated MODIS+VIIRS dataset: staging → events → fires → DuckDB catalog. In the final build, `staging/` and `events_raw/` were removed after validation. See `UNIFIED_DATA.md`. |
+| `validate_unified.py` | Integrity and conservation checks against the DuckDB catalog. Writes `validation_report.json`. |
+| `finalize_unified.sh` | Post-build finalizer: waits for a build PID, runs validation, rebuilds the tiny view-based catalog, then removes intermediates and raw CSVs. |
+| `UNIFIED_DATA.md` | Schema, ID format, final counts, definitions, and API/query examples for the unified dataset. |
+| `modis_viirs_harmonization.py` | **Legacy per-pass pipeline** (1,426 lines). Loads MODIS + unified VIIRS, runs Terra/Aqua matching, optional calibration, writes CSVs + year-wise Parquet + `run_manifest.json`. Still useful for the documented orbital-drift policy and diagnostics. |
 | `unify_viirs.py` | **Stage 1 pipeline** (698 lines). Reads per-satellite VIIRS CSVs, performs two-pass anchor matching, writes one unified-events CSV. |
 | `harmonization_architecture.py` | **Documentation only** — two module docstrings describing the architecture and the orbital-drift revision. Contains no executable code. |
 | `message.txt` | Stale CRLF paste of an earlier `modis_viirs_harmonization.py`. Reference/backup only. |
 | `message (2).txt` | Stale CRLF paste of an earlier `unify_viirs.py`. Reference/backup only. |
 | `message (1).txt` | Stale CRLF paste of `harmonization_architecture.py`. Reference only. |
-| `data/tu/MODRIS/MODRIS/output/wildfires_<year>.csv` | Cleaned MODIS yearly detections, 2000–2026. |
-| `data/tu/VIIRS-C2/SUOMI VIIRS/output/viirs_wildfires_<year>.csv` | Cleaned Suomi-NPP detections, 2012–2026. |
-| `data/tu/VIIRS-J1/output/viirs_wildfires_<year>.csv` | Cleaned NOAA-20 detections, 2018–2026. |
-| `data/tu/VIIRS-J2/output/viirs_wildfires_<year>.csv` | Cleaned NOAA-21 detections, 2023–2026. |
-| `data/tu/*/{clean.py,cleanup.py}` | One-off pandas cleaning scripts that produced the `output/` CSVs. Not part of the runtime pipeline. |
+| `data/unified/events/events_<year>.parquet` | **Final event layer** — 164,025,421 events, partitioned by year. |
+| `data/unified/fires/fires_<year>.parquet` | **Final fire layer** — 60,445,399 fires, partitioned by start year. |
+| `data/unified/wildfire.duckdb` | View-based DuckDB catalog: `events`, `fires`, `meta`, and lookup macros. No materialized copy. |
+| `data/unified/build_manifest.json` | Build config, per-year counts, and the cleanup record. |
+| `data/unified/validation_report.json` | Results of the final integrity/conservation checks. |
+| `data/tu/*/{clean.py,cleanup.py}` | One-off pandas cleaning scripts that produced the old yearly CSVs. Not part of the runtime pipeline. |
+| `data/tu/**/output/*.csv` (historical) | Cleaned MODIS/VIIRS yearly inputs. **Deleted after the 2026-11-05 build;** restore them to rebuild. |
 
-`data/` is ~37 GB. Only cleaned yearly outputs are present; original raw granules are absent.
-The cleaning scripts ship with `INPUT_DIRECTORY = ""` — they must be edited before reuse.
+`data/unified` is ~11 GB: `events/` 5.7 GB + `fires/` 4.9 GB + a ~524 KB view
+catalog. The raw `data/tu` CSVs are gone; only the cleaning `.py` scripts remain.
+The cleaning scripts ship with `INPUT_DIRECTORY = ""` — they must be edited
+before reuse.
 
-## 3. Canonical run order
+## 3. Unified dataset (current objective)
+
+`build_unified_wildfires.py` is the current production path. It built one
+de-duplicated dataset from every MODIS/VIIRS yearly CSV under `data/tu/`:
+
+- **staging** — normalized exact-deduplicated raw detections. Rebuild-time only;
+  removed after validation.
+- **events** — one row per near-simultaneous fire observation cluster
+  (1.5 km / 4 h, capped at one UTC day), keyed by `event_id`. Final layer kept.
+- **fires** — one row per persistent fire, linking events across days
+  (5 km / 3-day gap), keyed by `fire_id`. Final layer kept.
+- **catalog** — `data/unified/wildfire.duckdb`, now **view-based** over the
+  Parquet files, with `events`, `fires`, `meta`, and `find_event(id)` /
+  `find_fire(id)` / `events_for_fire(id)` helpers. There is **no `detections`
+  view** (staging was removed).
+
+Final build (2026-11-05):
+
+| Item | Value |
+| --- | --- |
+| Raw detections | 458,262,571 |
+| Events | 164,025,421 |
+| Fires | 60,445,399 |
+| On-disk size | ~11 GB |
+| Validation | all checks pass (`validation_report.json`) |
+
+The raw CSVs, `staging/`, and `events_raw/` were deleted after validation, so a
+full rebuild requires restoring the cleaned yearly CSVs first. The old
+`--stage fires` path cannot run until that `events_raw/` layer is recreated.
+
+Build/validate/finalize (after restoring inputs):
+
+```bash
+python3 build_unified_wildfires.py --all --out-dir data/unified --force
+python3 validate_unified.py --out-dir data/unified
+BUILD_PID=<pid> bash finalize_unified.sh
+```
+
+Definitions, schemas, caveats, and query examples are in `UNIFIED_DATA.md`.
+The older per-pass policy below (orbital-drift windows, Terra disabled after
+2022) is intentionally **not** used by the unified builder; the unified builder
+uses one consistent 1.5 km / 4 h rule across all years and sensors.
+
+## 4. Canonical run order (legacy per-pass pipeline)
+
+> **Historical reference only.** The cleaned yearly CSVs under `data/tu/*/output/`
+> were deleted after the 2026-11-05 unified build. These commands require
+> restoring those inputs first. The current production path is
+> `build_unified_wildfires.py` in section 3.
 
 ```text
 raw FIRMS-style CSVs
@@ -103,8 +160,9 @@ python3 modis_viirs_harmonization.py \
 - `--fit-calibration` / `--calibrate` fits Aqua confidence calibration from the current
   matched pairs; `--calibration-file` / `--apply-calibration` select the JSON path.
 - Parquet is written **only if `pyarrow` is installed**; otherwise the pipeline silently skips
-  Parquet and still writes CSVs + manifest. `pyarrow` is currently **not installed** in this
-  environment (nor is `pandas`). The runtime pipeline itself only needs the standard library.
+  Parquet and still writes CSVs + manifest. Current environment: `pyarrow` 26.0.1 and
+  `duckdb` 2.0.0 are installed; `pandas` is **not**. The legacy harmonizer itself only needs
+  the standard library.
 
 ### Stage 3 — optional legacy low-confidence filter
 
@@ -116,7 +174,7 @@ the old behaviour, pass `--apply-low-confidence-filter` together with a valid ca
 2. Unmatched MODIS: same rule.
 3. Unmatched VIIRS: label `L` → filtered; `N`/`H` → retained; missing/unknown → filtered.
 
-## 4. Scientific rules and invariants (do not silently change)
+## 5. Scientific rules and invariants (do not silently change)
 
 ### Orbital-drift time-window policy (`get_matching_window_policy`)
 
@@ -167,7 +225,11 @@ empirically validated. Treat it as a policy constant, not a scientific guarantee
 - Frozen calibration is scope-validated on reuse: requested dates must fall inside the
   calibration's `date_scope`.
 
-## 5. Data formats
+## 6. Data formats
+
+> **Historical input format.** The cleaned yearly CSVs described here were
+> deleted after the 2026-11-05 build. Restore them before running the legacy
+> per-pass pipeline or a full rebuild.
 
 Cleaned inputs (FIRMS-style, header names vary slightly):
 
@@ -189,7 +251,7 @@ Harmonized record columns are listed in `harmonize_pass` (coordinates, per-senso
 confidence, diagnostics, provenance). `write_csv_file` falls back to a 20-column header set for
 empty datasets, so schema can differ between empty and non-empty CSV outputs.
 
-## 6. Known traps / things to verify before changing behaviour
+## 7. Known traps / things to verify before changing behaviour
 
 - `harmonization_architecture.py` looks importable but only contains docstrings; the real logic
   lives in `modis_viirs_harmonization.py`.
@@ -198,25 +260,50 @@ empty datasets, so schema can differ between empty and non-empty CSV outputs.
 - `unify_viirs.py` cannot consume MODIS CSVs; keep VIIRS input directories separate.
 - The default output paths are `Data/Processed/...` (capital `D`) while the dataset lives under
   `data/`. Linux is case-sensitive — pass `--output-dir` explicitly.
-- No `pyarrow`/`pandas` in the current Python 3.14 environment. Install if Parquet or the
-  cleaning scripts are needed; the core harmonizer runs without them.
+- Current environment: `pyarrow` 26.0.1 and `duckdb` 2.0.0 are installed; `pandas` is **not**.
+  Install `pandas` only if you need the cleaning scripts.
+- **The final dataset is trimmed.** `staging/`, `events_raw/`, and the raw CSVs are deleted.
+  `--stage fires` cannot run until `events_raw/` is recreated from restored inputs.
+- `wildfire.duckdb` is **view-based**; there is no `detections` view. `find_event` /
+  `find_fire` scan the yearly Parquet files rather than using a B-tree index.
+- If you need to change fire thresholds, rebuild from restored raw CSVs. The final `events/`
+  Parquet can be projected to an `events_raw` layer by dropping `fire_id`, but the builder
+  does not expose a flag for that.
+- `finalize_unified.sh` deletes `staging/`, `events_raw/`, and raw CSVs when validation passes.
+  Use `BUILD_PID=<pid>` for a new build, `KEEP_RAW=1` to retain the raw CSVs, or run the
+  steps manually if you want to keep the intermediates.
 - Dates are compared as `YYYY-MM-DD` strings against milestone constants. Keep that format.
 - `--date` is mutually exclusive with `--start-date`/`--end-date`; the two range flags must be
   supplied together. Same rules apply in both CLIs.
 - There are no automated tests. Validate changes with a small dated slice and `--dry-run`, then
   inspect `run_manifest.json` counts and the conservation assertion in `run_unification`.
 
-## 7. Quick smoke checks
+## 8. Quick smoke checks
 
 ```bash
-# CLI surface
+# Unified dataset is present and queryable
+python3 - <<'PY'
+import duckdb
+con = duckdb.connect("data/unified/wildfire.duckdb", read_only=True)
+print(con.execute("SELECT count(*) FROM events").fetchone())
+print(con.execute("SELECT count(*) FROM fires").fetchone())
+print(con.execute("SELECT * FROM find_fire('FIRE-2024-000001')").fetchone())
+PY
+
+# Integrity report (uses the catalog; no raw inputs needed)
+python3 validate_unified.py --out-dir data/unified
+
+# CLI surface + syntax
+python3 build_unified_wildfires.py --help
 python3 unify_viirs.py --help
 python3 modis_viirs_harmonization.py --help
+python3 -m py_compile build_unified_wildfires.py validate_unified.py \
+  unify_viirs.py modis_viirs_harmonization.py
+```
 
-# Syntax check
-python3 -m py_compile unify_viirs.py modis_viirs_harmonization.py
+The legacy dry run below requires the restored cleaned CSVs:
 
-# Small dry run (adjust dates to an available slice)
+```bash
 python3 modis_viirs_harmonization.py --pass aqua \
   --modis-dir data/tu/MODRIS/MODRIS/output/wildfires_2024.csv \
   --viirs-file <unified_viirs.csv> --region quebec --date 2024-06-01 --dry-run

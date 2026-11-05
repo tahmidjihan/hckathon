@@ -34,15 +34,13 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import os
 import re
-import shutil
 import sys
 import time
 from collections import deque
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 try:
     import duckdb

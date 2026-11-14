@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WILDFIRE / UNIFIED</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+  <style>
+    :root { --bg:#000; --fg:#fff; --muted:#888; --fire:#ff3b00; --line:#222; --panel:#050505; }
+    * { box-sizing:border-box; }
+    html, body { margin:0; height:100%; background:var(--bg); color:var(--fg); font:14px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    #stars { position:fixed; inset:0; z-index:0; pointer-events:none; }
+    .app { position:relative; z-index:1; min-height:100%; display:grid; grid-template-rows:auto 1fr; }
+    header { border-bottom:2px solid var(--fg); padding:12px 16px; display:flex; flex-wrap:wrap; gap:10px; align-items:end; background:rgba(0,0,0,.85); }
+    .brand { font-weight:700; letter-spacing:.08em; margin-right:16px; font-size:16px; }
+    label { display:flex; flex-direction:column; gap:4px; font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; }
+    input, button { background:#000; color:#fff; border:2px solid #fff; padding:8px 10px; font:inherit; border-radius:0; }
+    input::placeholder { color:#555; }
+    input:focus { outline:none; border-color:var(--fire); }
+    button { cursor:pointer; text-transform:uppercase; letter-spacing:.06em; font-weight:700; }
+    button:hover { background:#fff; color:#000; }
+    button.fire { border-color:var(--fire); color:var(--fire); }
+    button.fire:hover { background:var(--fire); color:#000; }
+    main { display:grid; grid-template-columns:1fr 360px; min-height:0; }
+    #map { min-height:60vh; border-right:2px solid var(--line); filter:grayscale(1) invert(1) contrast(1.15) brightness(.9); }
+    .leaflet-popup-content-wrapper, .leaflet-popup-tip { background:#000; color:#fff; border:2px solid #fff; border-radius:0; box-shadow:none; }
+    .side { background:rgba(0,0,0,.9); display:flex; flex-direction:column; min-height:0; }
+    .side-head { padding:12px 14px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; align-items:center; gap:8px; }
+    .side-head h2 { margin:0; font-size:12px; letter-spacing:.08em; }
+    .status { font-size:11px; color:var(--muted); }
+    #list { overflow:auto; padding:0; margin:0; list-style:none; flex:1; }
+    #list li { border-bottom:1px solid var(--line); padding:10px 14px; cursor:pointer; }
+    #list li:hover { background:#111; }
+    #list li.active { border-left:4px solid var(--fire); padding-left:10px; background:#0d0d0d; }
+    .id { color:var(--fire); font-weight:700; font-size:12px; }
+    .meta { color:var(--muted); font-size:11px; margin-top:3px; }
+    .modal { position:fixed; inset:0; z-index:20; display:none; background:rgba(0,0,0,.72); padding:24px; }
+    .modal.open { display:flex; }
+    .modal-box { margin:auto; width:min(920px,100%); max-height:90vh; overflow:auto; background:#000; border:2px solid #fff; }
+    .modal-head { padding:14px 16px; border-bottom:2px solid #fff; display:flex; justify-content:space-between; align-items:center; position:sticky; top:0; background:#000; }
+    .modal-head h3 { margin:0; font-size:13px; letter-spacing:.08em; }
+    .modal-body { padding:16px; display:grid; gap:16px; }
+    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:8px 16px; }
+    .kv { border:1px solid var(--line); padding:8px; }
+    .kv b { display:block; color:var(--muted); font-size:10px; text-transform:uppercase; margin-bottom:2px; }
+    table { width:100%; border-collapse:collapse; font-size:12px; }
+    th, td { border:1px solid var(--line); padding:6px 8px; text-align:left; vertical-align:top; }
+    th { color:var(--muted); font-size:10px; text-transform:uppercase; }
+    .err { color:#ff8080; padding:12px 14px; font-size:12px; }
+    @media (max-width: 900px) { main { grid-template-columns:1fr; } #map { min-height:45vh; border-right:0; border-bottom:2px solid var(--line);} }
+  </style>
+</head>
+<body>
+<canvas id="stars"></canvas>
+<div class="app">
+  <header>
+    <div class="brand">WILDFIRE / UNIFIED</div>
+    <label>Location <input id="loc" placeholder="e.g. Quebec, Kazakhstan, 44.84,90.95" size="28"></label>
+    <label>From <input id="from" type="date"></label>
+    <label>To <input id="to" type="date"></label>
+    <label>Radius km <input id="radius" type="number" value="50" min="1" max="500" style="width:90px"></label>
+    <label>Year <input id="year" type="number" placeholder="auto" min="2000" max="2026" style="width:90px"></label>
+    <button id="search" class="fire">Search</button>
+    <button id="openModal">Open Data</button>
+  </header>
+  <main>
+    <div id="map"></div>
+    <aside class="side">
+      <div class="side-head">
+        <h2>FIRES</h2>
+        <div class="status" id="status">Enter a location and search.</div>
+      </div>
+      <ul id="list"></ul>
+    </aside>
+  </main>
+</div>
+
+<div class="modal" id="modal">
+  <div class="modal-box">
+    <div class="modal-head">
+      <h3 id="modalTitle">FIRE DATA</h3>
+      <button id="closeModal">Close</button>
+    </div>
+    <div class="modal-body" id="modalBody"></div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+<script>
+const API = location.origin === 'null' ? 'http://127.0.0.1:8000' : '';
+const $ = (id) => document.getElementById(id);
+let map, searchPin, markersLayer, currentResults = [], selected = null;
+
+// Starfield
+(function(){
+  const c = $('stars'), ctx = c.getContext('2d');
+  let W, H, stars;
+  function resize(){ W=c.width=innerWidth; H=c.height=innerHeight; stars=Array.from({length:Math.min(260, Math.floor(W*H/7000))},()=>({x:Math.random()*W,y:Math.random()*H,r:Math.random()*1.6+.2,a:Math.random()*.8+.2})); draw(); }
+  function draw(){ ctx.clearRect(0,0,W,H); ctx.fillStyle='#fff'; for(const s of stars){ ctx.globalAlpha=s.a; ctx.beginPath(); ctx.arc(s.x,s.y,s.r,0,Math.PI*2); ctx.fill(); } ctx.globalAlpha=1; }
+  addEventListener('resize', resize); resize();
+})();
+
+// Map
+map = L.map('map', { zoomControl:true, worldCopyJump:true }).setView([20, 0], 2);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 19, attribution: '&copy; OpenStreetMap contributors'
+}).addTo(map);
+markersLayer = L.layerGroup().addTo(map);
+
+function esc(s){ return String(s ?? '').replace(/[&<>\"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c])); }
+function setStatus(t){ $('status').textContent = t; }
+
+async function geocode(q){
+  const m = q.trim().match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/);
+  if (m) return { lat:+m[1], lon:+m[2], label: q.trim() };
+  const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(q)}`;
+  const r = await fetch(url, { headers: { 'Accept':'application/json' } });
+  const j = await r.json();
+  if (!j.length) throw new Error('Location not found');
+  return { lat:+j[0].lat, lon:+j[0].lon, label:j[0].display_name };
+}
+
+function renderList(items){
+  const ul = $('list'); ul.innerHTML = '';
+  if (!items.length){ ul.innerHTML = '<li class="meta">No fires found for this search.</li>'; return; }
+  for (const f of items){
+    const li = document.createElement('li');
+    li.dataset.id = f.fire_id;
+    li.innerHTML = `<div class="id">${esc(f.fire_id)}</div>
+      <div class="meta">${esc(f.start_date)} → ${esc(f.end_date)} · ${esc(f.n_events)} events · ${esc(f.n_detections)} det</div>
+      <div class="meta">${(+f.latitude).toFixed(4)}, ${(+f.longitude).toFixed(4)} · max FRP ${esc(f.max_frp)} · Σ ${esc(f.sum_frp)}</div>`;
+    li.onclick = () => selectFire(f.fire_id, f);
+    ul.appendChild(li);
+  }
+}
+
+function plotMarkers(items){
+  markersLayer.clearLayers();
+  for (const f of items){
+    const m = L.circleMarker([f.latitude, f.longitude], { radius:5, color:'#ff3b00', weight:2, fillColor:'#ff3b00', fillOpacity:.7 });
+    m.bindPopup(`<b>${esc(f.fire_id)}</b><br>${esc(f.start_date)} → ${esc(f.end_date)}<br>max FRP ${esc(f.max_frp)}<br><a href="#" data-id="${esc(f.fire_id)}">DETAIL</a>`);
+    m.on('popupopen', (e)=>{
+      const a = e.popup.getElement()?.querySelector('a[data-id]');
+      if (a) a.onclick = (ev)=>{ ev.preventDefault(); selectFire(f.fire_id, f); openModal(); };
+    });
+    m.addTo(markersLayer);
+  }
+}
+
+async function doSearch(){
+  const loc = $('loc').value.trim();
+  const from = $('from').value, to = $('to').value, radius = $('radius').value || 50, year = $('year').value;
+  if (!loc){ setStatus('Enter a location.'); return; }
+  setStatus('Geocoding…');
+  try{
+    const g = await geocode(loc);
+    if (searchPin) map.removeLayer(searchPin);
+    searchPin = L.marker([g.lat,g.lon]).addTo(map).bindPopup(esc(g.label)).openPopup();
+    map.flyTo([g.lat,g.lon], 8);
+    setStatus('Loading fires…');
+    const p = new URLSearchParams({ lat:g.lat, lon:g.lon, radius_km:radius, limit:'500' });
+    if (from) p.set('from', from);
+    if (to) p.set('to', to);
+    if (year) p.set('year', year);
+    else if (from) p.set('year', from.slice(0,4));
+    const r = await fetch(`${API}/fires?${p}`);
+    if (!r.ok) throw new Error(await r.text());
+    const data = await r.json();
+    currentResults = data.results || [];
+    renderList(currentResults);
+    plotMarkers(currentResults);
+    setStatus(`${currentResults.length} fires · ${esc(g.label.split(',')[0])}`);
+    openModal(true);
+  } catch(e){ setStatus('Error: ' + e.message); console.error(e); }
+}
+
+async function selectFire(id, fallback){
+  selected = id;
+  document.querySelectorAll('#list li').forEach(li=>li.classList.toggle('active', li.dataset.id===id));
+  setStatus('Loading fire detail…');
+  try{
+    const [fr, er] = await Promise.all([fetch(`${API}/fires/${id}`), fetch(`${API}/fires/${id}/events?limit=500`)]);
+    const fire = fr.ok ? await fr.json() : fallback;
+    const events = er.ok ? await er.json() : [];
+    renderDetail(fire, events);
+    if (fire && fire.latitude) map.flyTo([fire.latitude, fire.longitude], 10);
+    setStatus(`${id} · ${events.length} events loaded`);
+  } catch(e){ $('modalBody').innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+}
+
+function kv(k,v){ return `<div class="kv"><b>${esc(k)}</b>${esc(v)}</div>`; }
+
+function renderDetail(fire, events){
+  $('modalTitle').textContent = fire.fire_id || 'FIRE DATA';
+  const meta = [
+    kv('fire_id', fire.fire_id), kv('start', fire.start_date), kv('end', fire.end_date),
+    kv('n_events', fire.n_events), kv('n_detections', fire.n_detections),
+    kv('centroid', `${(+fire.latitude).toFixed(5)}, ${(+fire.longitude).toFixed(5)}`),
+    kv('bbox', `${(+fire.lat_min).toFixed(4)},${(+fire.lon_min).toFixed(4)} → ${(+fire.lat_max).toFixed(4)},${(+fire.lon_max).toFixed(4)}`),
+    kv('max_frp', fire.max_frp), kv('sum_frp', fire.sum_frp), kv('sources', fire.sources)
+  ].join('');
+  const rows = events.map(e=>`<tr>
+    <td>${esc(e.event_id)}</td><td>${esc(e.event_date)}</td><td>${esc((e.first_dt||'').replace('T',' ').slice(0,16))}</td>
+    <td>${(+e.latitude).toFixed(4)}, ${(+e.longitude).toFixed(4)}</td>
+    <td>${esc(e.n_detections)}</td><td>${esc(e.detected_by)}</td><td>${esc(e.max_frp)}</td><td>${esc(e.sum_frp)}</td><td>${esc(e.daynight)}</td>
+  </tr>`).join('');
+  $('modalBody').innerHTML = `
+    <div class="grid">${meta}</div>
+    <div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:.06em">Events (drill-down)</div>
+      <div style="overflow:auto"><table>
+        <thead><tr><th>event_id</th><th>date</th><th>first_dt</th><th>lat,lon</th><th>det</th><th>by</th><th>max_frp</th><th>sum_frp</th><th>d/n</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="9">No events loaded.</td></tr>'}</tbody>
+      </table></div>
+    </div>`;
+}
+
+function openModal(withList){
+  if (withList && currentResults.length && !selected){
+    const rows = currentResults.map(f=>`<tr style="cursor:pointer" data-id="${esc(f.fire_id)}">
+      <td>${esc(f.fire_id)}</td><td>${esc(f.start_date)}</td><td>${esc(f.end_date)}</td>
+      <td>${esc(f.n_events)}</td><td>${esc(f.max_frp)}</td><td>${(+f.latitude).toFixed(3)}, ${(+f.longitude).toFixed(3)}</td>
+    </tr>`).join('');
+    $('modalTitle').textContent = 'FIRES IN SEARCH';
+    $('modalBody').innerHTML = `<div style="overflow:auto"><table>
+      <thead><tr><th>fire_id</th><th>start</th><th>end</th><th>events</th><th>max_frp</th><th>centroid</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>
+      <div class="meta">Click a row for full detail and event timeline.</div>`;
+    $('modalBody').querySelectorAll('tr[data-id]').forEach(tr=>tr.onclick=()=>selectFire(tr.dataset.id));
+  }
+  $('modal').classList.add('open');
+}
+function closeModal(){ $('modal').classList.remove('open'); }
+
+$('search').onclick = doSearch;
+$('openModal').onclick = ()=>openModal(true);
+$('closeModal').onclick = closeModal;
+$('modal').onclick = (e)=>{ if (e.target.id==='modal') closeModal(); };
+$('loc').addEventListener('keydown', e=>{ if(e.key==='Enter') doSearch(); });
+</script>
+</body>
+</html>

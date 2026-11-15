@@ -1,0 +1,16 @@
+services:
+  wildfire:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      # Cloudflare R2 (used when local slim data is not mounted)
+      - s3_endpoint=${s3_endpoint}
+      - access_key=${access_key}
+      - secret_key=${secret_key}
+    volumes:
+      # Mount local slim parquet data for fast queries (recommended if available)
+      - ./data/unified_slim:/app/data/unified_slim:ro
+      # Or mount .env instead of passing variables above
+      # - ./.env:/app/.env:ro
+    restart: unless-stopped

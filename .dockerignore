@@ -1,0 +1,40 @@
+.git
+.gitignore
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+.env
+*.env
+env/
+venv/
+.venv/
+
+# large/local data and artifacts (mount data/unified_slim as a volume instead)
+data/unified_slim/
+data/unified_slim.zip
+data/unified_slim_build.log
+data/tu/
+
+# local-only / editor / misc
+*.log
+*.tmp
+.DS_Store
+.vscode/
+.idea/
+new?frontend/
+slim_unified.py
+build_unified_wildfires.py
+validate_unified.py
+finalize_unified.sh
+unify_viirs.py
+modis_viirs_harmonization.py
+harmonization_architecture.py
+message.txt
+message (1).txt
+message (2).txt
+UNIFIED_DATA.md
+AGENTS.md
+UI_UX_ROADMAP.md
+API_AND_ERD.md

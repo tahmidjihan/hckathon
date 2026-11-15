@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import threading
 from functools import lru_cache
 from pathlib import Path
@@ -52,13 +53,16 @@ _stats_lock = threading.Lock()
 def _load_env():
     vals = {}
     env_path = ROOT / ".env"
-    if not env_path.exists():
-        return vals
-    for line in env_path.read_text().splitlines():
-        line = line.strip()
-        if line and "=" in line and not line.startswith("#"):
-            k, v = line.split("=", 1)
-            vals[k.strip()] = v.strip()
+    if env_path.exists():
+        for line in env_path.read_text().splitlines():
+            line = line.strip()
+            if line and "=" in line and not line.startswith("#"):
+                k, v = line.split("=", 1)
+                vals[k.strip()] = v.strip()
+    # environment variables override/supplement .env
+    for k in ("s3_endpoint", "access_key", "secret_key", "token"):
+        if os.environ.get(k):
+            vals[k] = os.environ[k]
     return vals
 
 

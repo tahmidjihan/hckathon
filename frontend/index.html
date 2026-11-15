@@ -1,242 +1,287 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>WILDFIRE / UNIFIED</title>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
-  <style>
-    :root { --bg:#000; --fg:#fff; --muted:#888; --fire:#ff3b00; --line:#222; --panel:#050505; }
-    * { box-sizing:border-box; }
-    html, body { margin:0; height:100%; background:var(--bg); color:var(--fg); font:14px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-    #stars { position:fixed; inset:0; z-index:0; pointer-events:none; }
-    .app { position:relative; z-index:1; min-height:100%; display:grid; grid-template-rows:auto 1fr; }
-    header { border-bottom:2px solid var(--fg); padding:12px 16px; display:flex; flex-wrap:wrap; gap:10px; align-items:end; background:rgba(0,0,0,.85); }
-    .brand { font-weight:700; letter-spacing:.08em; margin-right:16px; font-size:16px; }
-    label { display:flex; flex-direction:column; gap:4px; font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; }
-    input, button { background:#000; color:#fff; border:2px solid #fff; padding:8px 10px; font:inherit; border-radius:0; }
-    input::placeholder { color:#555; }
-    input:focus { outline:none; border-color:var(--fire); }
-    button { cursor:pointer; text-transform:uppercase; letter-spacing:.06em; font-weight:700; }
-    button:hover { background:#fff; color:#000; }
-    button.fire { border-color:var(--fire); color:var(--fire); }
-    button.fire:hover { background:var(--fire); color:#000; }
-    main { display:grid; grid-template-columns:1fr 360px; min-height:0; }
-    #map { min-height:60vh; border-right:2px solid var(--line); filter:grayscale(1) invert(1) contrast(1.15) brightness(.9); }
-    .leaflet-popup-content-wrapper, .leaflet-popup-tip { background:#000; color:#fff; border:2px solid #fff; border-radius:0; box-shadow:none; }
-    .side { background:rgba(0,0,0,.9); display:flex; flex-direction:column; min-height:0; }
-    .side-head { padding:12px 14px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; align-items:center; gap:8px; }
-    .side-head h2 { margin:0; font-size:12px; letter-spacing:.08em; }
-    .status { font-size:11px; color:var(--muted); }
-    #list { overflow:auto; padding:0; margin:0; list-style:none; flex:1; }
-    #list li { border-bottom:1px solid var(--line); padding:10px 14px; cursor:pointer; }
-    #list li:hover { background:#111; }
-    #list li.active { border-left:4px solid var(--fire); padding-left:10px; background:#0d0d0d; }
-    .id { color:var(--fire); font-weight:700; font-size:12px; }
-    .meta { color:var(--muted); font-size:11px; margin-top:3px; }
-    .modal { position:fixed; inset:0; z-index:20; display:none; background:rgba(0,0,0,.72); padding:24px; }
-    .modal.open { display:flex; }
-    .modal-box { margin:auto; width:min(920px,100%); max-height:90vh; overflow:auto; background:#000; border:2px solid #fff; }
-    .modal-head { padding:14px 16px; border-bottom:2px solid #fff; display:flex; justify-content:space-between; align-items:center; position:sticky; top:0; background:#000; }
-    .modal-head h3 { margin:0; font-size:13px; letter-spacing:.08em; }
-    .modal-body { padding:16px; display:grid; gap:16px; }
-    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:8px 16px; }
-    .kv { border:1px solid var(--line); padding:8px; }
-    .kv b { display:block; color:var(--muted); font-size:10px; text-transform:uppercase; margin-bottom:2px; }
-    table { width:100%; border-collapse:collapse; font-size:12px; }
-    th, td { border:1px solid var(--line); padding:6px 8px; text-align:left; vertical-align:top; }
-    th { color:var(--muted); font-size:10px; text-transform:uppercase; }
-    .err { color:#ff8080; padding:12px 14px; font-size:12px; }
-    @media (max-width: 900px) { main { grid-template-columns:1fr; } #map { min-height:45vh; border-right:0; border-bottom:2px solid var(--line);} }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WILDFIRE / UNIFIED EXPLORER</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
+<style>
+:root{
+  --bg:#050505;--bg2:#0b0b0b;--panel:#101010;--panel2:#141414;--line:#242424;--fg:#f2f2f2;--muted:#9a9a9a;
+  --fire:#ff4d1a;--cool:#4dc3ff;--ok:#7dff9e;--warn:#ffd166;--violet:#c77dff;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+#stars{position:fixed;inset:0;z-index:0;pointer-events:none}
+.app{position:relative;z-index:1;min-height:100%;display:flex;flex-direction:column}
+.top{display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;padding:10px 14px;border-bottom:2px solid var(--fg);background:rgba(5,5,5,.94);position:sticky;top:0;z-index:30}
+.brand{font-weight:800;letter-spacing:.1em;font-size:15px;margin-right:6px}
+.brand small{display:block;color:var(--muted);font-weight:400;font-size:10px;letter-spacing:.04em}
+label{display:flex;flex-direction:column;gap:3px;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+input,select,button{background:#000;color:var(--fg);border:1px solid #555;padding:7px 8px;font:inherit;border-radius:0}
+input:focus,select:focus{outline:none;border-color:var(--cool)}
+button{cursor:pointer;text-transform:uppercase;letter-spacing:.05em;font-weight:700;border-color:#777}
+button:hover{background:#fff;color:#000}
+button.primary{border-color:var(--fire);color:var(--fire)}
+button.primary:hover{background:var(--fire);color:#000}
+button.ghost{border-color:var(--line);color:var(--muted)}
+.pill{display:inline-block;padding:2px 6px;border:1px solid #333;color:var(--muted);font-size:10px;margin:2px}
+.layout{flex:1;display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:10px;padding:10px;align-items:start}
+.main{display:flex;flex-direction:column;gap:10px;min-width:0}
+.panel{background:rgba(16,16,16,.94);border:1px solid var(--line);min-width:0}
+.panel h3{margin:0;padding:8px 10px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;border-bottom:1px solid var(--line);color:var(--muted);display:flex;justify-content:space-between;align-items:center;gap:8px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px}
+.kpi{background:rgba(16,16,16,.94);border:1px solid var(--line);padding:10px}
+.kpi .label{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.kpi .value{font-size:21px;font-weight:800;margin-top:4px;color:#fff}
+.kpi .sub{font-size:10px;color:var(--muted);margin-top:2px}
+.kpi .delta{font-size:10px;margin-top:3px}
+.delta.up{color:var(--fire)} .delta.down{color:var(--cool)} .delta.flat{color:var(--muted)}
+.map-row{display:grid;grid-template-columns:1fr;gap:10px}
+#map{width:100%;aspect-ratio:16/9;height:auto;min-height:520px;filter:grayscale(.2) invert(1) contrast(1.1) brightness(.85)}
+.leaflet-popup-content-wrapper,.leaflet-popup-tip{background:#000;color:#fff;border:1px solid #fff;border-radius:0;box-shadow:none}
+.leaflet-container{background:#111}
+.charts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.chart-wrap{padding:8px;height:230px;position:relative}
+.chart-wrap canvas{width:100%!important;height:100%!important}
+.grid-table-wrap{overflow:auto;max-height:340px}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th,td{padding:7px 8px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}
+th{position:sticky;top:0;background:#0e0e0e;color:var(--muted);font-size:10px;text-transform:uppercase;cursor:pointer}
+th:hover{color:#fff}
+tr:hover td{background:#141414}
+tr.sel td{background:#1a120f}
+.pager{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:8px 10px;border-top:1px solid var(--line);font-size:11px;color:var(--muted)}
+.inspector{position:sticky;top:86px;max-height:calc(100vh - 100px);display:flex;flex-direction:column}
+.inspector-body{padding:10px;overflow:auto;flex:1}
+.muted{color:var(--muted)} .fire{color:var(--fire)}
+.kv{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px}
+.kv div{border:1px solid var(--line);padding:6px}
+.kv b{display:block;font-size:10px;color:var(--muted);text-transform:uppercase;margin-bottom:2px}
+.err{color:#ff8080;padding:10px;font-size:12px}
+.loading{color:var(--warn);padding:10px;font-size:12px}
+.tag{display:inline-block;border:1px solid #444;padding:1px 5px;margin:1px 2px;font-size:10px;color:#ddd}
+.legend{padding:8px 10px;font-size:11px;color:var(--muted);border-top:1px solid var(--line)}
+.top-fires{max-height:260px;overflow:auto}
+.top-fires li{padding:6px 10px;border-bottom:1px solid var(--line);cursor:pointer;display:flex;justify-content:space-between;gap:8px}
+.top-fires li:hover{background:#141414}
+#queryBar{padding:6px 10px;border-bottom:1px solid var(--line);font-size:11px;color:var(--muted);display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+@media (max-width:1000px){
+  .layout{grid-template-columns:1fr}
+  .inspector{position:static;max-height:none}
+  .charts{grid-template-columns:1fr}
+  #map{min-height:300px}
+}
+@media (max-width:700px){
+  .kpis{grid-auto-flow:column;grid-auto-columns:160px;overflow:auto;display:grid}
+  .top{gap:6px}
+}
+</style>
 </head>
 <body>
 <canvas id="stars"></canvas>
 <div class="app">
-  <header>
-    <div class="brand">WILDFIRE / UNIFIED</div>
-    <label>Location <input id="loc" placeholder="e.g. Quebec, Kazakhstan, 44.84,90.95" size="28"></label>
-    <label>From <input id="from" type="date"></label>
-    <label>To <input id="to" type="date"></label>
-    <label>Radius km <input id="radius" type="number" value="50" min="1" max="500" style="width:90px"></label>
-    <label>Year <input id="year" type="number" placeholder="auto" min="2000" max="2026" style="width:90px"></label>
-    <button id="search" class="fire">Search</button>
-    <button id="openModal">Open Data</button>
-  </header>
-  <main>
-    <div id="map"></div>
-    <aside class="side">
-      <div class="side-head">
-        <h2>FIRES</h2>
-        <div class="status" id="status">Enter a location and search.</div>
-      </div>
-      <ul id="list"></ul>
-    </aside>
-  </main>
-</div>
+  <div class="top">
+    <div class="brand">WILDFIRE / UNIFIED<small>global fire intelligence explorer</small></div>
+    <label>Location<input id="loc" placeholder="place or lat,lon" size="20"></label>
+    <label>Year<select id="year"><option value="">All</option></select></label>
+    <label>From<input id="from" type="date"></label>
+    <label>To<input id="to" type="date"></label>
+    <label>Radius km<input id="radius" type="number" value="50" min="1" max="500" style="width:76px"></label>
+    <label>Sort<select id="sort"><option value="start_date">Start</option><option value="max_frp">Max FRP</option><option value="n_events">Events</option><option value="n_detections">Detections</option><option value="sum_frp">Sum FRP</option><option value="duration">Duration</option></select></label>
+    <label>Order<select id="order"><option value="desc">Desc</option><option value="asc">Asc</option></select></label>
+    <button id="search" class="primary">Search</button>
+    <button id="reset" class="ghost">Reset</button>
+    <button id="share" class="ghost">Copy Link</button>
+  </div>
 
-<div class="modal" id="modal">
-  <div class="modal-box">
-    <div class="modal-head">
-      <h3 id="modalTitle">FIRE DATA</h3>
-      <button id="closeModal">Close</button>
+  <div class="layout">
+    <div class="main">
+      <div id="queryBar"></div>
+      <div class="kpis" id="kpis"></div>
+
+      <div class="panel">
+        <h3><span>Map</span><span id="mapStatus" class="muted"></span></h3>
+        <div id="map"></div>
+        <div class="legend">One persistent 16:9 Leaflet map · non-repeating world (`noWrap`, bounds) · clustered markers (sized by max FRP). Selecting a fire highlights its bbox area. Use year/bbox/date for fast server-filtered results.</div>
+      </div>
+
+      <div class="charts">
+        <div class="panel"><h3><span>Activity over time</span><span id="tsMeta" class="muted"></span></h3><div class="chart-wrap"><canvas id="tsChart"></canvas></div></div>
+        <div class="panel"><h3><span>Source contribution</span><span id="srcMeta" class="muted"></span></h3><div class="chart-wrap"><canvas id="srcChart"></canvas></div></div>
+        <div class="panel"><h3><span>Seasonality (by month)</span><span id="seasonMeta" class="muted"></span></h3><div class="chart-wrap"><canvas id="seasonChart"></canvas></div></div>
+        <div class="panel"><h3><span>Distribution</span><span><select id="distMetric" style="font-size:10px;padding:2px 4px"><option value="max_frp">Max FRP</option><option value="n_events">Events</option><option value="n_detections">Detections</option><option value="duration">Duration (days)</option></select></span></h3><div class="chart-wrap"><canvas id="distChart"></canvas></div></div>
+      </div>
+
+      <div class="panel">
+        <h3><span>Top fires</span><span><select id="topMetric" style="font-size:10px;padding:2px 4px"><option value="max_frp">Max FRP</option><option value="n_events">Events</option><option value="n_detections">Detections</option><option value="duration">Duration</option></select></span></h3>
+        <ul id="topList" class="top-fires" style="list-style:none;margin:0;padding:0"></ul>
+      </div>
+
+      <div class="panel">
+        <h3><span>Fire records</span><span id="gridMeta" class="muted"></span></h3>
+        <div class="grid-table-wrap">
+          <table>
+            <thead><tr>
+              <th data-sort="fire_id">Fire ID</th><th data-sort="start_date">Start</th><th data-sort="end_date">End</th>
+              <th data-sort="n_events">Events</th><th data-sort="n_detections">Detections</th><th data-sort="max_frp">Max FRP</th>
+              <th data-sort="sum_frp">Sum FRP</th><th>Centroid</th><th>Sources</th>
+            </tr></thead>
+            <tbody id="gridBody"></tbody>
+          </table>
+        </div>
+        <div class="pager">
+          <button id="prevPage" class="ghost">Prev</button>
+          <button id="nextPage" class="ghost">Next</button>
+          <span id="pageInfo"></span>
+          <span id="querySummary" style="margin-left:auto"></span>
+        </div>
+      </div>
     </div>
-    <div class="modal-body" id="modalBody"></div>
+
+    <div class="panel inspector">
+      <h3><span>Fire Inspector</span><span id="inspStatus" class="muted"></span></h3>
+      <div class="inspector-body" id="inspBody"><div class="muted">Select a fire from the map, grid, or top list to view details and event timeline.</div></div>
+    </div>
   </div>
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script>
 const API = location.origin === 'null' ? 'http://127.0.0.1:8000' : '';
-const $ = (id) => document.getElementById(id);
-let map, searchPin, markersLayer, currentResults = [], selected = null;
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+const fmt = n => n==null||n==='' ? '—' : Number(n).toLocaleString(undefined,{maximumFractionDigits:2});
+const state = { page:0, limit:100, results:[], selected:null, lat:null, lon:null, label:null };
 
 // Starfield
 (function(){
-  const c = $('stars'), ctx = c.getContext('2d');
-  let W, H, stars;
-  function resize(){ W=c.width=innerWidth; H=c.height=innerHeight; stars=Array.from({length:Math.min(260, Math.floor(W*H/7000))},()=>({x:Math.random()*W,y:Math.random()*H,r:Math.random()*1.6+.2,a:Math.random()*.8+.2})); draw(); }
-  function draw(){ ctx.clearRect(0,0,W,H); ctx.fillStyle='#fff'; for(const s of stars){ ctx.globalAlpha=s.a; ctx.beginPath(); ctx.arc(s.x,s.y,s.r,0,Math.PI*2); ctx.fill(); } ctx.globalAlpha=1; }
-  addEventListener('resize', resize); resize();
+  const c=$('stars'),ctx=c.getContext('2d'); let W,H,S;
+  function resize(){W=c.width=innerWidth;H=c.height=innerHeight;S=Array.from({length:Math.min(220,Math.floor(W*H/9000))},()=>({x:Math.random()*W,y:Math.random()*H,r:Math.random()*1.4+.2,a:Math.random()*0.7+0.15}));draw();}
+  function draw(){ctx.clearRect(0,0,W,H);ctx.fillStyle='#fff';for(const s of S){ctx.globalAlpha=s.a;ctx.beginPath();ctx.arc(s.x,s.y,s.r,0,Math.PI*2);ctx.fill();}ctx.globalAlpha=1;}
+  addEventListener('resize',resize); resize();
 })();
 
-// Map
-map = L.map('map', { zoomControl:true, worldCopyJump:true }).setView([20, 0], 2);
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  maxZoom: 19, attribution: '&copy; OpenStreetMap contributors'
-}).addTo(map);
-markersLayer = L.layerGroup().addTo(map);
+// One persistent map
+const map = L.map('map', { worldCopyJump:false, maxBounds:[[-85,-180],[85,180]], maxBoundsViscosity:1.0, minZoom:2 }).setView([20,0],2);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { noWrap:true, bounds:[[-85,-180],[85,180]], maxZoom:19, attribution:'&copy; OpenStreetMap contributors' }).addTo(map);
+const markers = L.markerClusterGroup({ chunkedLoading:true, maxClusterRadius:40 });
+map.addLayer(markers);
+let searchMarker = null, selectedLayer = null;
 
-function esc(s){ return String(s ?? '').replace(/[&<>\"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c])); }
-function setStatus(t){ $('status').textContent = t; }
+Chart.defaults.color = '#9a9a9a';
+Chart.defaults.borderColor = '#242424';
+const mkLine = (ctx,datasets)=>new Chart(ctx,{type:'line',data:{labels:[],datasets},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{labels:{boxWidth:10}}}}});
+const tsChart = mkLine($('tsChart'),[
+  {label:'Fires',data:[],borderColor:'#ff4d1a',backgroundColor:'rgba(255,77,26,.12)',tension:.2,yAxisID:'y'},
+  {label:'Events',data:[],borderColor:'#4dc3ff',backgroundColor:'rgba(77,195,255,.08)',tension:.2,yAxisID:'y1'}
+]);
+tsChart.options.scales={y:{position:'left'},y1:{position:'right',grid:{drawOnChartArea:false}}};
+const srcChart = new Chart($('srcChart'),{type:'bar',data:{labels:[],datasets:[{label:'Fires',data:[],backgroundColor:['#ff4d1a','#4dc3ff','#ffd166','#7dff9e','#c77dff','#ff8fab','#9bf6ff']}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{maxRotation:35}}}}});
+const seasonChart = new Chart($('seasonChart'),{type:'bar',data:{labels:[],datasets:[{label:'Fires',data:[],backgroundColor:'#ff4d1a'},{label:'Events',data:[],backgroundColor:'rgba(77,195,255,.45)'}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{boxWidth:10}}}}});
+const distChart = new Chart($('distChart'),{type:'bar',data:{labels:[],datasets:[{label:'Fires',data:[],backgroundColor:'#ffd166'}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{maxRotation:45,minRotation:0,autoSkip:true,maxTicksLimit:10}}}}});
 
-async function geocode(q){
-  const m = q.trim().match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/);
-  if (m) return { lat:+m[1], lon:+m[2], label: q.trim() };
-  const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(q)}`;
-  const r = await fetch(url, { headers: { 'Accept':'application/json' } });
-  const j = await r.json();
-  if (!j.length) throw new Error('Location not found');
-  return { lat:+j[0].lat, lon:+j[0].lon, label:j[0].display_name };
+function getParams(){ const p=new URLSearchParams(location.search); return {loc:p.get('loc')||'',year:p.get('year')||'',from:p.get('from')||'',to:p.get('to')||'',radius:p.get('radius')||'50',sort:p.get('sort')||'start_date',order:p.get('order')||'desc',lat:p.get('lat'),lon:p.get('lon'),page:+(p.get('page')||0),fire:p.get('fire')||''}; }
+function setForm(p){ $('loc').value=p.loc||'';$('year').value=p.year||'';$('from').value=p.from||'';$('to').value=p.to||'';$('radius').value=p.radius||50;$('sort').value=p.sort||'start_date';$('order').value=p.order||'desc'; state.page=p.page||0; state.selected=p.fire||null; if(p.lat&&p.lon){state.lat=+p.lat;state.lon=+p.lon;state.label=p.loc||`${p.lat},${p.lon}`;} }
+function syncUrl(){ const p=new URLSearchParams(); const v=id=>$(id).value; if(v('loc'))p.set('loc',v('loc')); if(v('year'))p.set('year',v('year')); if(v('from'))p.set('from',v('from')); if(v('to'))p.set('to',v('to')); if(v('radius')&&v('radius')!=='50')p.set('radius',v('radius')); if(v('sort')!=='start_date')p.set('sort',v('sort')); if(v('order')!=='desc')p.set('order',v('order')); if(state.lat!=null){p.set('lat',state.lat);p.set('lon',state.lon);} if(state.page)p.set('page',state.page); if(state.selected)p.set('fire',state.selected); const qs=p.toString(); history.replaceState(null,'', qs?('?'+qs):location.pathname); }
+function queryParams(extra={}){ const p=new URLSearchParams(); const y=$('year').value,from=$('from').value,to=$('to').value; if(y)p.set('year',y); if(from)p.set('from',from); if(to)p.set('to',to); if(state.lat!=null&&state.lon!=null){p.set('lat',state.lat);p.set('lon',state.lon);p.set('radius_km',$('radius').value||50);} Object.entries(extra).forEach(([k,v])=>{ if(v!==undefined&&v!==null&&v!=='')p.set(k,v); }); return p; }
+async function fetchJson(url){ const r=await fetch(url); if(!r.ok) throw new Error(await r.text().catch(()=>r.statusText)); return r.json(); }
+async function geocode(q){ const m=q.trim().match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/); if(m) return {lat:+m[1],lon:+m[2],label:q.trim()}; const r=await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(q)}`,{headers:{Accept:'application/json'}}); const j=await r.json(); if(!j.length) throw new Error('Location not found'); return {lat:+j[0].lat,lon:+j[0].lon,label:j[0].display_name}; }
+
+async function loadYears(){ try{ const ys=await fetchJson(`${API}/years`); const sel=$('year'); ys.forEach(y=>{const o=document.createElement('option');o.value=y.year;o.textContent=`${y.year} (${y.fires.toLocaleString()})`; sel.appendChild(o);}); }catch(e){console.warn(e);} setForm(getParams()); }
+
+function deltaHtml(curr, prev){ if(prev==null||prev===0||curr==null) return '<span class="delta flat">— vs prev</span>'; const pct=((curr-prev)/prev)*100; const cls=pct>0?'up':pct<0?'down':'flat'; const sign=pct>0?'+':''; return `<span class="delta ${cls}">${sign}${pct.toFixed(1)}% vs prev year</span>`; }
+
+function renderKpis(d, prev){
+  const cards=[
+    ['Fire incidents', d.fires, 'persistent fires', prev?.fires],
+    ['Events', d.events, 'observation clusters', prev?.events],
+    ['Detections', d.detections, 'raw detections', prev?.detections],
+    ['Peak FRP', d.max_frp, 'maximum observed', prev?.max_frp],
+    ['Sum FRP', d.sum_frp, 'sum of stored FRP', prev?.sum_frp],
+    ['Coverage', (d.min_date&&d.max_date)?`${String(d.min_date).slice(0,10)} → ${String(d.max_date).slice(0,10)}`:'—', d.filters?.year?`year ${d.filters.year}`:'selected range', null]
+  ];
+  $('kpis').innerHTML = cards.map(c=>`<div class="kpi"><div class="label">${esc(c[0])}</div><div class="value">${esc(typeof c[1]==='number'?fmt(c[1]):c[1])}</div><div class="sub">${esc(c[2])}</div>${c[3]!==null && c[3]!==undefined && typeof c[1]==='number'?deltaHtml(c[1],c[3]):''}</div>`).join('');
 }
 
-function renderList(items){
-  const ul = $('list'); ul.innerHTML = '';
-  if (!items.length){ ul.innerHTML = '<li class="meta">No fires found for this search.</li>'; return; }
-  for (const f of items){
-    const li = document.createElement('li');
-    li.dataset.id = f.fire_id;
-    li.innerHTML = `<div class="id">${esc(f.fire_id)}</div>
-      <div class="meta">${esc(f.start_date)} → ${esc(f.end_date)} · ${esc(f.n_events)} events · ${esc(f.n_detections)} det</div>
-      <div class="meta">${(+f.latitude).toFixed(4)}, ${(+f.longitude).toFixed(4)} · max FRP ${esc(f.max_frp)} · Σ ${esc(f.sum_frp)}</div>`;
-    li.onclick = () => selectFire(f.fire_id, f);
-    ul.appendChild(li);
-  }
+function renderQueryBar(){
+  const parts=[];
+  parts.push(`<span class="pill">area: ${esc(state.label||'global')}</span>`);
+  parts.push(`<span class="pill">year: ${esc($('year').value||'all')}</span>`);
+  const from=$('from').value,to=$('to').value; if(from||to) parts.push(`<span class="pill">dates: ${esc(from||'…')} → ${esc(to||'…')}</span>`);
+  if(state.lat!=null) parts.push(`<span class="pill">radius: ${esc($('radius').value)} km</span>`);
+  parts.push(`<span class="pill">sort: ${esc($('sort').value)} ${esc($('order').value)}</span>`);
+  $('queryBar').innerHTML = `<b style="color:#fff">Current query</b> ${parts.join('')}`;
 }
 
-function plotMarkers(items){
-  markersLayer.clearLayers();
-  for (const f of items){
-    const m = L.circleMarker([f.latitude, f.longitude], { radius:5, color:'#ff3b00', weight:2, fillColor:'#ff3b00', fillOpacity:.7 });
-    m.bindPopup(`<b>${esc(f.fire_id)}</b><br>${esc(f.start_date)} → ${esc(f.end_date)}<br>max FRP ${esc(f.max_frp)}<br><a href="#" data-id="${esc(f.fire_id)}">DETAIL</a>`);
-    m.on('popupopen', (e)=>{
-      const a = e.popup.getElement()?.querySelector('a[data-id]');
-      if (a) a.onclick = (ev)=>{ ev.preventDefault(); selectFire(f.fire_id, f); openModal(); };
-    });
-    m.addTo(markersLayer);
-  }
-}
+function renderGrid(items){ const tb=$('gridBody'); if(!items.length){ tb.innerHTML='<tr><td colspan="9" class="muted">No fires found for current filters.</td></tr>'; return; } tb.innerHTML=items.map(f=>`<tr data-id="${esc(f.fire_id)}" class="${f.fire_id===state.selected?'sel':''}"><td class="fire">${esc(f.fire_id)}</td><td>${esc(String(f.start_date).slice(0,10))}</td><td>${esc(String(f.end_date).slice(0,10))}</td><td>${fmt(f.n_events)}</td><td>${fmt(f.n_detections)}</td><td>${fmt(f.max_frp)}</td><td>${fmt(f.sum_frp)}</td><td>${(+f.latitude).toFixed(3)}, ${(+f.longitude).toFixed(3)}</td><td>${esc(f.sources)}</td></tr>`).join(''); tb.querySelectorAll('tr[data-id]').forEach(tr=>tr.onclick=()=>selectFire(tr.dataset.id)); }
 
-async function doSearch(){
-  const loc = $('loc').value.trim();
-  const from = $('from').value, to = $('to').value, radius = $('radius').value || 50, year = $('year').value;
-  if (!loc){ setStatus('Enter a location.'); return; }
-  setStatus('Geocoding…');
+function renderMarkers(items){ markers.clearLayers(); if(selectedLayer){ map.removeLayer(selectedLayer); selectedLayer=null; } items.forEach(f=>{ const intensity=Math.min(12,4+Math.log10((f.max_frp||1)+1)*2); const m=L.circleMarker([f.latitude,f.longitude],{radius:intensity,color:'#ff4d1a',weight:1,fillColor:'#ff4d1a',fillOpacity:.55}); m.bindPopup(`<b>${esc(f.fire_id)}</b><br>${esc(String(f.start_date).slice(0,10))} → ${esc(String(f.end_date).slice(0,10))}<br>events ${esc(f.n_events)} · max FRP ${esc(f.max_frp)}`); m.on('click',()=>selectFire(f.fire_id)); markers.addLayer(m); }); $('mapStatus').textContent=`${items.length} shown (clustered)`; }
+
+function renderTimeseries(data){ const labels=data.series.map(x=>x.period); tsChart.data.labels=labels; tsChart.data.datasets[0].data=data.series.map(x=>x.fires); tsChart.data.datasets[1].data=data.series.map(x=>x.events); tsChart.update(); $('tsMeta').textContent=`${data.interval} · ${labels.length} pts`; }
+function renderSources(data){ const top=data.sources.slice(0,8); srcChart.data.labels=top.map(x=>x.source); srcChart.data.datasets[0].data=top.map(x=>x.fires); srcChart.update(); $('srcMeta').textContent=`${data.sources.length} tokens`; }
+function renderSeasonality(data){ seasonChart.data.labels=data.series.map(x=>x.label); seasonChart.data.datasets[0].data=data.series.map(x=>x.fires); seasonChart.data.datasets[1].data=data.series.map(x=>x.events); seasonChart.update(); $('seasonMeta').textContent='Jan–Dec'; }
+function renderDistribution(data){ distChart.data.labels=(data.bins||[]).map(b=>b.label); distChart.data.datasets[0].data=(data.bins||[]).map(b=>b.fires); distChart.update(); }
+
+function renderTopFires(data){ const ul=$('topList'); const items=data.results||[]; if(!items.length){ ul.innerHTML='<li class="muted">No data.</li>'; return; } ul.innerHTML=items.map((f,i)=>`<li data-id="${esc(f.fire_id)}"><span><b class="fire">#${i+1}</b> ${esc(f.fire_id)} <span class="muted">${esc(String(f.start_date).slice(0,10))}</span></span><span>${fmt(f.rank_metric ?? f.max_frp)}</span></li>`).join(''); ul.querySelectorAll('li[data-id]').forEach(li=>li.onclick=()=>selectFire(li.dataset.id)); }
+
+async function loadInspector(fireId){ $('inspStatus').textContent='loading…'; try{ const [fire,events]=await Promise.all([fetchJson(`${API}/fires/${encodeURIComponent(fireId)}`), fetchJson(`${API}/fires/${encodeURIComponent(fireId)}/events?limit=500`)]); state.selected=fireId; syncUrl(); document.querySelectorAll('#gridBody tr').forEach(tr=>tr.classList.toggle('sel',tr.dataset.id===fireId)); const tags=String(fire.sources||'').split(',').filter(Boolean).map(s=>`<span class="tag">${esc(s)}</span>`).join(''); const evRows=(events||[]).map(e=>`<tr><td>${esc(e.event_id)}</td><td>${esc(String(e.event_date).slice(0,10))}</td><td>${esc(String(e.first_dt||'').replace('T',' ').slice(0,16))}</td><td>${(+e.latitude).toFixed(4)},${(+e.longitude).toFixed(4)}</td><td>${fmt(e.n_detections)}</td><td>${fmt(e.max_frp)}</td><td>${esc(e.detected_by||'')}</td><td>${esc(e.daynight||'')}</td></tr>`).join(''); $('inspBody').innerHTML=`<div class="kv"><div><b>Fire ID</b><span class="fire">${esc(fire.fire_id)}</span></div><div><b>Duration</b>${esc(String(fire.start_date).slice(0,10))} → ${esc(String(fire.end_date).slice(0,10))}</div><div><b>Events</b>${fmt(fire.n_events)}</div><div><b>Detections</b>${fmt(fire.n_detections)}</div><div><b>Max FRP</b>${fmt(fire.max_frp)}</div><div><b>Sum FRP</b>${fmt(fire.sum_frp)}</div><div><b>Centroid</b>${(+fire.latitude).toFixed(5)}, ${(+fire.longitude).toFixed(5)}</div><div><b>BBox</b>${(+fire.lat_min).toFixed(4)},${(+fire.lon_min).toFixed(4)} → ${(+fire.lat_max).toFixed(4)},${(+fire.lon_max).toFixed(4)}</div></div><div style="margin-bottom:10px"><b class="muted" style="font-size:10px;text-transform:uppercase">Sources</b><div>${tags||'—'}</div></div><div style="display:flex;gap:8px;margin-bottom:10px"><button class="ghost" onclick="zoomToFire()">Zoom to area</button><button class="ghost" onclick="copyText('${esc(fire.fire_id)}')">Copy ID</button></div><div class="muted" style="font-size:10px;text-transform:uppercase;margin:8px 0">Event timeline (${(events||[]).length})</div><div style="overflow:auto;max-height:300px"><table><thead><tr><th>Event</th><th>Date</th><th>First</th><th>Lat,Lon</th><th>Det</th><th>Max FRP</th><th>By</th><th>D/N</th></tr></thead><tbody>${evRows||'<tr><td colspan="8" class="muted">No events.</td></tr>'}</tbody></table></div>`; if(selectedLayer){map.removeLayer(selectedLayer);} const bounds=[[fire.lat_min,fire.lon_min],[fire.lat_max,fire.lon_max]]; const rect=L.rectangle(bounds,{color:'#ff4d1a',weight:2,fillColor:'#ff4d1a',fillOpacity:0.18,dashArray:'4 4'}); const center=L.circleMarker([fire.latitude,fire.longitude],{radius:7,color:'#4dc3ff',weight:2,fillColor:'#4dc3ff',fillOpacity:0.9}); selectedLayer=L.featureGroup([rect,center]).addTo(map); try{ map.fitBounds(bounds,{padding:[30,30],maxZoom:12}); }catch(e){} $('inspStatus').textContent=fire.fire_id; window.__currentFire=fire; }catch(e){ $('inspBody').innerHTML=`<div class="err">${esc(e.message)}</div>`; $('inspStatus').textContent='error'; } }
+function zoomToFire(){ const f=window.__currentFire; if(!f) return; map.fitBounds([[f.lat_min,f.lon_min],[f.lat_max,f.lon_max]],{padding:[30,30],maxZoom:12}); }
+function copyText(t){ navigator.clipboard?.writeText(t); }
+window.zoomToFire=zoomToFire; window.copyText=copyText;
+async function selectFire(id){ await loadInspector(id); }
+
+async function runSearch(resetPage=true){
+  if(resetPage) state.page=0;
+  const loc=$('loc').value.trim();
+  renderQueryBar();
+  $('gridMeta').textContent='loading…'; $('kpis').innerHTML='<div class="kpi"><div class="loading">Loading overview…</div></div>';
   try{
-    const g = await geocode(loc);
-    if (searchPin) map.removeLayer(searchPin);
-    searchPin = L.marker([g.lat,g.lon]).addTo(map).bindPopup(esc(g.label)).openPopup();
-    map.flyTo([g.lat,g.lon], 8);
-    setStatus('Loading fires…');
-    const p = new URLSearchParams({ lat:g.lat, lon:g.lon, radius_km:radius, limit:'500' });
-    if (from) p.set('from', from);
-    if (to) p.set('to', to);
-    if (year) p.set('year', year);
-    else if (from) p.set('year', from.slice(0,4));
-    const r = await fetch(`${API}/fires?${p}`);
-    if (!r.ok) throw new Error(await r.text());
-    const data = await r.json();
-    currentResults = data.results || [];
-    renderList(currentResults);
-    plotMarkers(currentResults);
-    setStatus(`${currentResults.length} fires · ${esc(g.label.split(',')[0])}`);
-    openModal(true);
-  } catch(e){ setStatus('Error: ' + e.message); console.error(e); }
+    if(loc){ const g=await geocode(loc); state.lat=g.lat; state.lon=g.lon; state.label=g.label; if(searchMarker) map.removeLayer(searchMarker); searchMarker=L.marker([g.lat,g.lon]).addTo(map).bindPopup(esc(g.label)).openPopup(); map.flyTo([g.lat,g.lon],7); }
+    else { state.lat=null; state.lon=null; state.label=null; if(searchMarker){map.removeLayer(searchMarker); searchMarker=null;} }
+    renderQueryBar(); syncUrl();
+    const base=queryParams(); const listP=new URLSearchParams(base); listP.set('limit',state.limit); listP.set('offset',state.page*state.limit); listP.set('sort',$('sort').value); listP.set('order',$('order').value);
+    const tsInterval = $('year').value ? 'month' : 'year';
+    const distMetric = $('distMetric').value; const topMetric = $('topMetric').value;
+    // previous year comparison when a single year is selected and no custom date range
+    let prevPromise = Promise.resolve(null);
+    if($('year').value && !$('from').value && !$('to').value && state.lat==null){ const py=+$('year').value-1; prevPromise = fetchJson(`${API}/stats/overview?year=${py}`).catch(()=>null); }
+    const [firesRes, overview, ts, src, season, dist, top, prev] = await Promise.all([
+      fetchJson(`${API}/fires?${listP}`),
+      fetchJson(`${API}/stats/overview?${base}`),
+      fetchJson(`${API}/stats/timeseries?${base}&interval=${tsInterval}`),
+      fetchJson(`${API}/stats/sources?${base}`),
+      fetchJson(`${API}/stats/seasonality?${base}`),
+      fetchJson(`${API}/stats/distribution?${base}&metric=${distMetric}`),
+      fetchJson(`${API}/stats/top-fires?${base}&metric=${topMetric}&limit=10`),
+      prevPromise
+    ]);
+    state.results=firesRes.results||[];
+    renderKpis(overview, prev);
+    renderGrid(state.results); renderMarkers(state.results);
+    renderTimeseries(ts); renderSources(src); renderSeasonality(season); renderDistribution(dist); renderTopFires(top);
+    $('gridMeta').textContent=`${state.results.length} rows (page ${state.page+1})`;
+    $('pageInfo').textContent=`Page ${state.page+1} · offset ${state.page*state.limit} · showing ${state.results.length}`;
+    $('querySummary').textContent=[state.label||'global',$('year').value||'all years',$('from').value&&$('to').value?`${$('from').value}..${$('to').value}`:($('from').value||$('to').value||'all dates')].filter(Boolean).join(' · ');
+    if(state.selected) loadInspector(state.selected).catch(()=>{});
+  }catch(e){ $('kpis').innerHTML=`<div class="err">${esc(e.message)}</div>`; $('gridBody').innerHTML=`<tr><td colspan="9" class="err">${esc(e.message)}</td></tr>`; $('gridMeta').textContent='error'; console.error(e); }
 }
 
-async function selectFire(id, fallback){
-  selected = id;
-  document.querySelectorAll('#list li').forEach(li=>li.classList.toggle('active', li.dataset.id===id));
-  setStatus('Loading fire detail…');
-  try{
-    const [fr, er] = await Promise.all([fetch(`${API}/fires/${id}`), fetch(`${API}/fires/${id}/events?limit=500`)]);
-    const fire = fr.ok ? await fr.json() : fallback;
-    const events = er.ok ? await er.json() : [];
-    renderDetail(fire, events);
-    if (fire && fire.latitude) map.flyTo([fire.latitude, fire.longitude], 10);
-    setStatus(`${id} · ${events.length} events loaded`);
-  } catch(e){ $('modalBody').innerHTML = `<div class="err">${esc(e.message)}</div>`; }
-}
+$('search').onclick=()=>runSearch(true);
+$('reset').onclick=()=>{ $('loc').value='';$('year').value='';$('from').value='';$('to').value='';$('radius').value=50;$('sort').value='start_date';$('order').value='desc'; state={page:0,limit:100,results:[],selected:null,lat:null,lon:null,label:null}; if(searchMarker){map.removeLayer(searchMarker);searchMarker=null;} markers.clearLayers(); if(selectedLayer){map.removeLayer(selectedLayer);selectedLayer=null;} syncUrl(); $('inspBody').innerHTML='<div class="muted">Select a fire from the map, grid, or top list.</div>'; $('kpis').innerHTML=''; $('gridBody').innerHTML=''; $('topList').innerHTML=''; renderQueryBar(); map.setView([20,0],2); };
+$('share').onclick=()=>{ syncUrl(); navigator.clipboard?.writeText(location.href); $('share').textContent='Copied'; setTimeout(()=>$('share').textContent='Copy Link',1200); };
+$('prevPage').onclick=()=>{ if(state.page>0){ state.page--; runSearch(false);} };
+$('nextPage').onclick=()=>{ if(state.results.length>=state.limit){ state.page++; runSearch(false);} };
+$('loc').addEventListener('keydown',e=>{ if(e.key==='Enter') runSearch(true); });
+document.querySelectorAll('th[data-sort]').forEach(th=>th.onclick=()=>{ const s=th.dataset.sort; if($('sort').value===s){ $('order').value=$('order').value==='desc'?'asc':'desc'; } else { $('sort').value=s; $('order').value='desc'; } runSearch(true); });
+$('distMetric').onchange=()=>runSearch(false);
+$('topMetric').onchange=()=>runSearch(false);
 
-function kv(k,v){ return `<div class="kv"><b>${esc(k)}</b>${esc(v)}</div>`; }
-
-function renderDetail(fire, events){
-  $('modalTitle').textContent = fire.fire_id || 'FIRE DATA';
-  const meta = [
-    kv('fire_id', fire.fire_id), kv('start', fire.start_date), kv('end', fire.end_date),
-    kv('n_events', fire.n_events), kv('n_detections', fire.n_detections),
-    kv('centroid', `${(+fire.latitude).toFixed(5)}, ${(+fire.longitude).toFixed(5)}`),
-    kv('bbox', `${(+fire.lat_min).toFixed(4)},${(+fire.lon_min).toFixed(4)} → ${(+fire.lat_max).toFixed(4)},${(+fire.lon_max).toFixed(4)}`),
-    kv('max_frp', fire.max_frp), kv('sum_frp', fire.sum_frp), kv('sources', fire.sources)
-  ].join('');
-  const rows = events.map(e=>`<tr>
-    <td>${esc(e.event_id)}</td><td>${esc(e.event_date)}</td><td>${esc((e.first_dt||'').replace('T',' ').slice(0,16))}</td>
-    <td>${(+e.latitude).toFixed(4)}, ${(+e.longitude).toFixed(4)}</td>
-    <td>${esc(e.n_detections)}</td><td>${esc(e.detected_by)}</td><td>${esc(e.max_frp)}</td><td>${esc(e.sum_frp)}</td><td>${esc(e.daynight)}</td>
-  </tr>`).join('');
-  $('modalBody').innerHTML = `
-    <div class="grid">${meta}</div>
-    <div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:.06em">Events (drill-down)</div>
-      <div style="overflow:auto"><table>
-        <thead><tr><th>event_id</th><th>date</th><th>first_dt</th><th>lat,lon</th><th>det</th><th>by</th><th>max_frp</th><th>sum_frp</th><th>d/n</th></tr></thead>
-        <tbody>${rows || '<tr><td colspan="9">No events loaded.</td></tr>'}</tbody>
-      </table></div>
-    </div>`;
-}
-
-function openModal(withList){
-  if (withList && currentResults.length && !selected){
-    const rows = currentResults.map(f=>`<tr style="cursor:pointer" data-id="${esc(f.fire_id)}">
-      <td>${esc(f.fire_id)}</td><td>${esc(f.start_date)}</td><td>${esc(f.end_date)}</td>
-      <td>${esc(f.n_events)}</td><td>${esc(f.max_frp)}</td><td>${(+f.latitude).toFixed(3)}, ${(+f.longitude).toFixed(3)}</td>
-    </tr>`).join('');
-    $('modalTitle').textContent = 'FIRES IN SEARCH';
-    $('modalBody').innerHTML = `<div style="overflow:auto"><table>
-      <thead><tr><th>fire_id</th><th>start</th><th>end</th><th>events</th><th>max_frp</th><th>centroid</th></tr></thead>
-      <tbody>${rows}</tbody></table></div>
-      <div class="meta">Click a row for full detail and event timeline.</div>`;
-    $('modalBody').querySelectorAll('tr[data-id]').forEach(tr=>tr.onclick=()=>selectFire(tr.dataset.id));
-  }
-  $('modal').classList.add('open');
-}
-function closeModal(){ $('modal').classList.remove('open'); }
-
-$('search').onclick = doSearch;
-$('openModal').onclick = ()=>openModal(true);
-$('closeModal').onclick = closeModal;
-$('modal').onclick = (e)=>{ if (e.target.id==='modal') closeModal(); };
-$('loc').addEventListener('keydown', e=>{ if(e.key==='Enter') doSearch(); });
+(async function init(){ await loadYears(); const p=getParams(); if(p.loc||p.year||p.from||p.to||p.lat){ if(p.lat&&p.lon){state.lat=+p.lat;state.lon=+p.lon;} await runSearch(false); } else { $('year').value='2024'; renderQueryBar(); await runSearch(false); } })();
 </script>
 </body>
 </html>
